@@ -1,0 +1,134 @@
+'use client'
+
+import React, { useState, useCallback, useRef } from 'react'
+import { Button } from "@/components/ui/button"
+import { Progress } from "@/components/ui/progress"
+import { Card, CardContent } from "@/components/ui/card"
+import { Cross1Icon, UploadIcon, FileIcon } from '@radix-ui/react-icons'
+
+interface FileUpload {
+  file: File
+  progress: number
+  isComplete: boolean
+}
+
+export default function BrowserMultiFileUpload() {
+  const [uploads, setUploads] = useState<FileUpload[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const simulateUpload = useCallback((file: File) => {
+    return new Promise<void>((resolve) => {
+      let progress = 0
+      const interval = setInterval(() => {
+        progress += 1
+        setUploads(prev =>
+          prev.map(upload =>
+            upload.file === file ? { ...upload, progress } : upload
+          )
+        )
+        if (progress >= 100) {
+          clearInterval(interval)
+          setUploads(prev =>
+            prev.map(upload =>
+              upload.file === file ? { ...upload, isComplete: true } : upload
+            )
+          )
+          resolve()
+        }
+      }, 10)
+    })
+  }, [])
+
+  const handleFiles = useCallback(async (files: File[]) => {
+    const newUploads = files.map(file => ({ file, progress: 0, isComplete: false }))
+    setUploads(prev => [...prev, ...newUploads])
+
+    for (const upload of newUploads) {
+      await simulateUpload(upload.file)
+    }
+  }, [simulateUpload])
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const files = Array.from(e.dataTransfer.files)
+    handleFiles(files)
+  }, [handleFiles])
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+  }, [])
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    handleFiles(files)
+  }, [handleFiles])
+
+  const removeUpload = useCallback((file: File) => {
+    setUploads(prev => prev.filter(upload => upload.file !== file))
+  }, [])
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
+  return (
+    <div className="w-full max-w-md mx-auto p-4">
+      <div>
+          <div
+            className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer"
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <UploadIcon className="mx-auto h-12 w-12" />
+            <p className="mt-2 text-sm">Drag and drop files here, or click to select files</p>
+          </div>
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="hidden"
+            onChange={handleFileChange}
+            multiple
+            aria-label="File upload"
+          />
+      </div>
+      <div className="mt-4 space-y-4">
+        {uploads.map((upload, index) => (
+          <Card key={index}>
+            <CardContent className="py-4">
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center">
+                  <FileIcon className="h-4 w-4 mr-2" />
+                  <span className="text-sm font-medium truncate">{upload.file.name}</span>
+                </div>
+                {!upload.isComplete && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeUpload(upload.file)}
+                    aria-label={`Remove ${upload.file.name}`}
+                  >
+                    <Cross1Icon className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {!upload.isComplete ? (
+                <Progress value={upload.progress} className="w-full" />
+              ) : (
+                <div className="text-xs mt-1">
+                  <p>Size: {formatFileSize(upload.file.size)}</p>
+                  <p>Type: {upload.file.type || 'Unknown'}</p>
+                  <p>Last Modified: {new Date(upload.file.lastModified).toLocaleString()}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  )
+}
