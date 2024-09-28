@@ -1,13 +1,14 @@
 import BrowserMultiFileUpload from "@/components/custom/BrowserMultiFileUpload";
 import { AudioEditor } from "@/components/custom/AudioEditor";
-import { PageHeader, PageHeaderHeading } from "@/components/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
+
+import { AudioFile, useAudioStore } from "@/stores/audio-store";
+import MasterToolbar from "@/components/custom/MasterToolbar";
 
 export default function Dashboard() {
-  const [files, setFiles] = useState<File[]>([]);
+  const { files, setFiles } = useAudioStore();
 
-  const updateFiles = useCallback((files: File[]) => {
+  const updateFiles = useCallback((files: AudioFile[]) => {
     setFiles(files);
   }, []);
 
@@ -17,6 +18,7 @@ export default function Dashboard() {
         <BrowserMultiFileUpload onUploadComplete={updateFiles} />
         {files.length > 0 && (
           <div>
+            <MasterToolbar />
             {files.map((file, index) => (
               <div key={index} className={"my-4"}>
                 <AudioEditor file={file} />

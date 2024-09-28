@@ -7,8 +7,10 @@ import resolveConfig from "tailwindcss/resolveConfig";
 import tailwindConfig from "../../../tailwind.config";
 import { Card, CardContent, CardFooter } from "../ui/card";
 import { Button } from "../ui/button";
-import { PauseIcon, PlayIcon } from "@radix-ui/react-icons";
+import { PauseIcon, PlayIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { useTheme } from "@/hooks/useTheme";
+import { AudioFile, useAudioStore } from "@/stores/audio-store";
+import { match } from "assert";
 
 const formatTime = (seconds: number) =>
   [seconds / 60, seconds % 60]
@@ -16,7 +18,7 @@ const formatTime = (seconds: number) =>
     .join(":");
 
 interface WaveformProps {
-  file: File;
+  file: AudioFile;
 }
 
 export const AudioEditor = ({ file }: WaveformProps) => {
@@ -25,24 +27,32 @@ export const AudioEditor = ({ file }: WaveformProps) => {
   const { colors } = resolvedConfig.theme;
   const audioContainer = useRef(null);
   const regionsPlugin = useMemo(() => RegionsPlugin.create(), []);
-  const hoverPlugin = useMemo(() => HoverPlugin.create({
-    lineColor: '#ff0000',
-    lineWidth: 2,
-    labelBackground: '#555',
-    labelColor: '#fff',
-    labelSize: '11px',
-  }), []);
+  const hoverPlugin = useMemo(
+    () =>
+      HoverPlugin.create({
+        lineColor: "#ff0000",
+        lineWidth: 2,
+        labelBackground: "#555",
+        labelColor: "#fff",
+        labelSize: "11px",
+      }),
+    []
+  );
   const timelinePlugin = useMemo(() => TimelinePlugin.create(), []);
-  const plugins = useMemo(() => [regionsPlugin, hoverPlugin, timelinePlugin], []);
-  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  const plugins = useMemo(
+    () => [regionsPlugin, hoverPlugin, timelinePlugin],
+    []
+  );
+  const url = useMemo(() => URL.createObjectURL(file.file), [file]);
+  const { getFile, updateFile } = useAudioStore();
 
-  const { wavesurfer, currentTime } = useWavesurfer({
+  const { wavesurfer } = useWavesurfer({
     container: audioContainer,
     height: 100,
     waveColor: theme === "dark" ? colors.gray[700] : colors.gray[400],
     // progressColor: "hsl(24.6 95% 50%)",
     progressColor: theme === "dark" ? colors.red[500] : colors.red[700],
-      // Set a bar width
+    // Set a bar width
     barWidth: 3,
     // Optionally, specify the spacing between bars
     barGap: 2,
@@ -55,20 +65,28 @@ export const AudioEditor = ({ file }: WaveformProps) => {
   const [selectionDuration, setSelectionDuration] = useState(0);
   const [ready, setReady] = useState(false);
   const isPlaying = useRef(false);
+  const currentTimeRef = useRef(0);
 
   const onPlayPause = useCallback(() => {
     wavesurfer && wavesurfer.playPause();
+    isPlaying.current = !isPlaying.current;
   }, [wavesurfer]);
 
-  const onUpdatedRegion = useCallback((region: Region) => {
-    // Update selection duration
-    setSelectionDuration(region.end - region.start);
+  const onUpdatedRegion = useCallback(
+    (region: Region) => {
+      // Update selection duration
+      setSelectionDuration(region.end - region.start);
 
-    // Check if playhead is within the region
-    if (isPlaying.current && (currentTime < region.start || currentTime > region.end)) {
-      region.play();
-    }
-  }, [setSelectionDuration, currentTime, isPlaying]);
+      // Check if playhead is within the region, if not, play the region from the start
+      if (
+        isPlaying.current &&
+        (currentTimeRef.current < region.start || currentTimeRef.current > region.end)
+      ) {
+        region.play();
+      }
+    },
+    [setSelectionDuration, currentTimeRef, isPlaying]
+  );
 
   useEffect(() => {
     if (!wavesurfer) return;
@@ -78,12 +96,17 @@ export const AudioEditor = ({ file }: WaveformProps) => {
       regionsPlugin.getRegions()[0].play();
     });
 
-    wavesurfer.on('click', (location) => {
+    wavesurfer.on('timeupdate', (currentTime) => {
+      currentTimeRef.current = currentTime;
+    });
+
+    wavesurfer.on("click", (location) => {
       // Play the region if the selected location is outside of the region, otherwise, just play the selected location
       const region = regionsPlugin.getRegions()[0];
       const start = region.start / wavesurfer.getDuration();
       const end = region.end / wavesurfer.getDuration();
-      if(location < start || location > end) {
+
+      if (location < start || location > end) {
         region.play();
       }
     });
@@ -91,25 +114,23 @@ export const AudioEditor = ({ file }: WaveformProps) => {
     wavesurfer.on("pause", () => {
       isPlaying.current = false;
     });
-    
+
     wavesurfer.on("ready", () => {
       setReady(true);
       regionsPlugin.addRegion({
         start: 1,
         end: 100,
-        content: 'Section to Keep',
-        color: 'rgba(26, 48, 70, 0.5)',
+        content: "Section to Keep",
+        color: "rgba(26, 48, 70, 0.5)",
         minLength: 10,
-
       });
 
       regionsPlugin.on("region-updated", onUpdatedRegion);
 
       // Enforce looping, don't allow playback outside of the region
       regionsPlugin.on("region-out", (region) => {
-        region.play()
+        region.play();
       });
-
     });
 
     return () => {
@@ -121,15 +142,23 @@ export const AudioEditor = ({ file }: WaveformProps) => {
   return (
     <Card>
       <CardContent className="pt-8 pb-0">
-        {!ready && <div className="text-center">Preparing audio...</div>}
+        {!ready && (
+          <div className="text-center">
+            <div>
+              Preparing audio...
+            </div>
+          </div>
+        )}
 
         <div ref={audioContainer} className="cursor-text" />
-     
 
         <div className="cursor-default w-full flex justify-between mt-4">
           <div>
             <div>
-              File: <i className="text-primary">{file.name}</i>
+              File:{" "}
+              <i className="text-primary">
+                {getFile(file.file.name)?.file.name}
+              </i>
             </div>
             <div>
               Selection duration: <code>{formatTime(selectionDuration)}</code>

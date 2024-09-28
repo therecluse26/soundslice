@@ -1,4 +1,4 @@
-# React Shadcn Starter
+# Audio Trimmer
 
 React + Vite + TypeScript template for building apps with shadcn/ui.
 

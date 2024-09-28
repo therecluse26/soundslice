@@ -1,10 +1,9 @@
-"use client";
-
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
 import { Cross1Icon, UploadIcon, FileIcon } from "@radix-ui/react-icons";
+import { AudioFile } from "@/stores/audio-store";
 
 interface FileUpload {
   file: File;
@@ -13,7 +12,7 @@ interface FileUpload {
 }
 
 interface BrowserMultiFileUploadProps {
-  onUploadComplete?: (files: File[]) => void;
+  onUploadComplete?: (files: AudioFile[]) => void;
 }
 
 export default function BrowserMultiFileUpload({
@@ -31,7 +30,11 @@ export default function BrowserMultiFileUpload({
       uploads.every((upload) => upload.isComplete)
     ) {
       setIsUploadComplete(true);
-      onUploadComplete(uploads.map((upload) => upload.file));
+      onUploadComplete(uploads.map((upload) => {
+        return {
+          file: upload.file,
+        } as AudioFile;
+      }));
     }
   }, [uploads, onUploadComplete, isUploadComplete]);
 
@@ -61,15 +64,24 @@ export default function BrowserMultiFileUpload({
   const handleFiles = useCallback(
     async (files: File[]) => {
       setIsUploadComplete(false);
+      if (files.length === 0) {
+        console.error("No files received");
+        return;
+      }
+      
       const newUploads = files.map((file) => ({
         file,
         progress: 0,
         isComplete: false,
       }));
       setUploads((prev) => [...prev, ...newUploads]);
-
+  
       for (const upload of newUploads) {
-        await uploadFile(upload.file);
+        try {
+          await uploadFile(upload.file);
+        } catch (error) {
+          console.error(`Error uploading file ${upload.file.name}:`, error);
+        }
       }
     },
     [uploadFile]
@@ -78,8 +90,10 @@ export default function BrowserMultiFileUpload({
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
-      const files = Array.from(e.dataTransfer.files);
-      handleFiles(files);
+      const droppedFiles = Array.from(e.dataTransfer.files);
+      if (droppedFiles.length > 0) {
+        handleFiles(droppedFiles);
+      }
     },
     [handleFiles]
   );
