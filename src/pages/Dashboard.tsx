@@ -9,7 +9,6 @@ export default function Dashboard() {
   const { tracks: files, setFiles } = useAudioStore();
 
   const updateFiles = useCallback((files: EditorTrack[]) => {
-    console.log("Updating files...", files);
     setFiles(files);
   }, []);
 

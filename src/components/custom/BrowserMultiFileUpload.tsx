@@ -22,6 +22,7 @@ export default function BrowserMultiFileUpload({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadCompleteRef = useRef(false);
   const [isUploadComplete, setIsUploadComplete] = useState(false);
+  const [dragDropError, setDragDropError] = useState<string | null>(null);
 
   useEffect(() => {
     if (
@@ -32,7 +33,6 @@ export default function BrowserMultiFileUpload({
       setIsUploadComplete(true);
       onUploadComplete(
         uploads.map((upload) => {
-          console.log("upload", upload);
           return {
             file: upload.file,
           } as EditorTrack;
@@ -42,6 +42,8 @@ export default function BrowserMultiFileUpload({
   }, [uploads, onUploadComplete, isUploadComplete]);
 
   const uploadFile = useCallback((file: File) => {
+    setDragDropError(null); // Reset error state
+
     return new Promise<void>((resolve, reject) => {
       // Create a new File object to ensure we have a fresh reference
       const freshFile = new File([file], file.name, { type: file.type });
@@ -148,9 +150,32 @@ export default function BrowserMultiFileUpload({
       e.preventDefault();
       e.stopPropagation();
 
-      const droppedFiles = Array.from(e.dataTransfer.files);
-      if (droppedFiles.length > 0) {
-        handleFiles(droppedFiles);
+      setDragDropError(null); // Reset error state
+
+      try {
+        const dt = e.dataTransfer;
+
+        if (!dt || !dt.files || dt.files.length === 0) {
+          throw new Error("No files detected in the drop event.");
+        }
+
+        const droppedFiles = Array.from(dt.files);
+
+        if (droppedFiles.length > 0) {
+          if (droppedFiles[0].size === 0) {
+            throw new Error(
+              "File size is 0, which may indicate a browser compatibility issue."
+            );
+          }
+          handleFiles(droppedFiles);
+        } else {
+          throw new Error("No files were dropped.");
+        }
+      } catch (error) {
+        console.error("Error in drag and drop:", error);
+        setDragDropError(
+          "Your browser might not support file drag and dropping. Please click here to use your browser's built-in upload dialog."
+        );
       }
     },
     [handleFiles]
@@ -178,6 +203,11 @@ export default function BrowserMultiFileUpload({
           <p className="mt-2 text-sm">
             Drag and drop files here, or click to select files
           </p>
+          {dragDropError && (
+            <div style={{ color: "red", marginTop: "10px" }}>
+              {dragDropError}
+            </div>
+          )}
         </div>
         <input
           type="file"
