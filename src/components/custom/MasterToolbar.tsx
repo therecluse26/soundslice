@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAudioStore } from "@/stores/audio-store";
-import { OutputFormat } from "@/lib/audio-trimmer";
+import { OutputFormat } from "@/lib/audio-service";
 import { DownloadIcon } from "@radix-ui/react-icons";
 
 const MasterToolbar = () => {

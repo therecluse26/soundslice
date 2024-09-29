@@ -1,19 +1,18 @@
 import { Region } from "wavesurfer.js/dist/plugins/regions";
 import { create } from "zustand";
-import { OutputFormat } from "@/lib/audio-trimmer";
+import { OutputFormat } from "@/lib/audio-service";
 
-export type AudioFile = {
+export type EditorTrack = {
   file: File;
   selectedRegion?: Region;
 };
 
 interface AudioState {
-  files: AudioFile[];
-  setFiles: (files: AudioFile[]) => void;
-  addFile: (file: AudioFile) => void;
-  removeFile: (file: AudioFile) => void;
-  getFile: (fileName: string) => AudioFile | undefined;
-  updateFile: (file: AudioFile) => void;
+  tracks: EditorTrack[];
+  setFiles: (tracks: EditorTrack[]) => void;
+  addFile: (track: EditorTrack) => void;
+  getTrack: (fileName: string) => EditorTrack | undefined;
+  updateFile: (track: EditorTrack) => void;
   compressFiles: boolean;
   setCompressFiles: (compress: boolean) => void;
   normalizeAudio: boolean;
@@ -23,20 +22,16 @@ interface AudioState {
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
-  files: [],
-  setFiles: (files: AudioFile[]) => set({ files }),
-  addFile: (file: AudioFile) =>
-    set((state) => ({ files: [...state.files, file] })),
-  removeFile: (file: AudioFile) =>
+  tracks: [],
+  setFiles: (tracks: EditorTrack[]) => set({ tracks: tracks }),
+  addFile: (tracks: EditorTrack) =>
+    set((state) => ({ tracks: [...state.tracks, tracks] })),
+  getTrack: (fileName: string) =>
+    get().tracks.find((f) => f.file.name === fileName),
+  updateFile: (track: EditorTrack) =>
     set((state) => ({
-      files: state.files.filter((f) => f.file.name !== file.file.name),
-    })),
-  getFile: (fileName: string) =>
-    get().files.find((f) => f.file.name === fileName),
-  updateFile: (file: AudioFile) =>
-    set((state) => ({
-      files: state.files.map((f) =>
-        f.file.name === file.file.name ? file : f
+      tracks: state.tracks.map((t) =>
+        t.file.name === track.file.name ? track : t
       ),
     })),
 

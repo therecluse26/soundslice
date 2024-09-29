@@ -1,18 +1,18 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
-import { Cross1Icon, UploadIcon, FileIcon } from "@radix-ui/react-icons";
-import { AudioFile } from "@/stores/audio-store";
+import { UploadIcon, FileIcon } from "@radix-ui/react-icons";
+import { EditorTrack } from "@/stores/audio-store";
 
 interface FileUpload {
   file: File;
   progress: number;
   isComplete: boolean;
+  error?: string;
 }
 
 interface BrowserMultiFileUploadProps {
-  onUploadComplete?: (files: AudioFile[]) => void;
+  onUploadComplete?: (files: EditorTrack[]) => void;
 }
 
 export default function BrowserMultiFileUpload({
@@ -30,34 +30,69 @@ export default function BrowserMultiFileUpload({
       uploads.every((upload) => upload.isComplete)
     ) {
       setIsUploadComplete(true);
-      onUploadComplete(uploads.map((upload) => {
-        return {
-          file: upload.file,
-        } as AudioFile;
-      }));
+      onUploadComplete(
+        uploads.map((upload) => {
+          console.log("upload", upload);
+          return {
+            file: upload.file,
+          } as EditorTrack;
+        })
+      );
     }
   }, [uploads, onUploadComplete, isUploadComplete]);
 
   const uploadFile = useCallback((file: File) => {
-    return new Promise<void>((resolve) => {
-      let progress = 0;
-      const interval = setInterval(() => {
-        progress += 40;
-        setUploads((prev) =>
-          prev.map((upload) =>
-            upload.file === file ? { ...upload, progress } : upload
-          )
-        );
-        if (progress >= 100) {
-          clearInterval(interval);
+    return new Promise<void>((resolve, reject) => {
+      // Create a new File object to ensure we have a fresh reference
+      const freshFile = new File([file], file.name, { type: file.type });
+
+      const reader = new FileReader();
+
+      reader.onload = (event) => {
+        // Simulate upload process
+        let progress = 0;
+        const interval = setInterval(() => {
+          progress += 20;
           setUploads((prev) =>
             prev.map((upload) =>
-              upload.file === file ? { ...upload, isComplete: true } : upload
+              upload.file.name === freshFile.name
+                ? { ...upload, progress }
+                : upload
             )
           );
-          resolve();
+          if (progress >= 100) {
+            clearInterval(interval);
+            setUploads((prev) =>
+              prev.map((upload) =>
+                upload.file.name === freshFile.name
+                  ? { ...upload, isComplete: true }
+                  : upload
+              )
+            );
+            resolve();
+          }
+        }, 100);
+      };
+
+      reader.onerror = (event) => {
+        console.error(`FileReader error for ${freshFile.name}:`, reader.error);
+        reject(
+          new Error(
+            `FileReader error: ${reader.error?.message || "Unknown error"}`
+          )
+        );
+      };
+
+      try {
+        reader.readAsArrayBuffer(freshFile);
+      } catch (error) {
+        console.error(`Error starting file read for ${freshFile.name}:`, error);
+        if (error instanceof Error) {
+          reject(new Error(`Failed to start file read: ${error.message}`));
+        } else {
+          reject(new Error("Failed to start file read: Unknown error"));
         }
-      }, 100);
+      }
     });
   }, []);
 
@@ -68,28 +103,51 @@ export default function BrowserMultiFileUpload({
         console.error("No files received");
         return;
       }
-      
+
       const newUploads = files.map((file) => ({
         file,
         progress: 0,
         isComplete: false,
       }));
       setUploads((prev) => [...prev, ...newUploads]);
-  
+
       for (const upload of newUploads) {
         try {
           await uploadFile(upload.file);
         } catch (error) {
           console.error(`Error uploading file ${upload.file.name}:`, error);
+          setUploads((prev) =>
+            prev.map((u) =>
+              u.file.name === upload.file.name
+                ? {
+                    ...u,
+                    isComplete: true,
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  }
+                : u
+            )
+          );
         }
       }
     },
     [uploadFile]
   );
 
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  }, []);
+
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
+      e.stopPropagation();
+
       const droppedFiles = Array.from(e.dataTransfer.files);
       if (droppedFiles.length > 0) {
         handleFiles(droppedFiles);
@@ -97,10 +155,6 @@ export default function BrowserMultiFileUpload({
     },
     [handleFiles]
   );
-
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  }, []);
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,18 +164,6 @@ export default function BrowserMultiFileUpload({
     [handleFiles]
   );
 
-  const removeUpload = useCallback((file: File) => {
-    setUploads((prev) => prev.filter((upload) => upload.file !== file));
-  }, []);
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
   return (
     <div className="w-full max-w-md mx-auto p-4">
       <div>
@@ -129,6 +171,7 @@ export default function BrowserMultiFileUpload({
           className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer"
           onDrop={handleDrop}
           onDragOver={handleDragOver}
+          onDragEnter={handleDragEnter}
           onClick={() => fileInputRef.current?.click()}
         >
           <UploadIcon className="mx-auto h-12 w-12" />
@@ -149,7 +192,7 @@ export default function BrowserMultiFileUpload({
         {uploads.map((upload, index) => (
           <div key={index}>
             {!upload.isComplete && (
-              <Card key={index}>
+              <Card>
                 <CardContent className="py-4">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center">
@@ -160,6 +203,9 @@ export default function BrowserMultiFileUpload({
                     </div>
                   </div>
                   <Progress value={upload.progress} className="w-full" />
+                  {upload.error && (
+                    <p className="text-red-500 text-sm mt-2">{upload.error}</p>
+                  )}
                 </CardContent>
               </Card>
             )}

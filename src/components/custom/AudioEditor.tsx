@@ -14,12 +14,12 @@ import {
   ReloadIcon,
 } from "@radix-ui/react-icons";
 import { useTheme } from "@/hooks/useTheme";
-import { AudioFile, useAudioStore } from "@/stores/audio-store";
-import { AudioTrimmer } from "@/lib/audio-trimmer";
+import { EditorTrack, useAudioStore } from "@/stores/audio-store";
+import { AudioService } from "@/lib/audio-service";
 
 // Interfaces
-interface WaveformProps {
-  file: AudioFile;
+interface EditorProps {
+  track: EditorTrack;
 }
 
 // Utility functions
@@ -32,10 +32,10 @@ const filenameWithoutExtension = (filename: string) => {
   return filename.split(".").slice(0, -1).join(".");
 };
 
-export const AudioEditor = ({ file }: WaveformProps) => {
+export const AudioEditor = ({ track }: EditorProps) => {
   // Hooks
   const { theme } = useTheme();
-  const { getFile } = useAudioStore();
+  const { getTrack: getFile } = useAudioStore();
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
 
@@ -67,8 +67,8 @@ export const AudioEditor = ({ file }: WaveformProps) => {
     () => [regionsPlugin, hoverPlugin, timelinePlugin],
     [regionsPlugin, hoverPlugin, timelinePlugin]
   );
-  const url = useMemo(() => URL.createObjectURL(file.file), [file]);
-  const audioTrimmer = useMemo(() => new AudioTrimmer(), []);
+  const url = useMemo(() => URL.createObjectURL(track.file), [track]);
+  const audioService = useMemo(() => new AudioService(track.file), []);
 
   // Wavesurfer setup
   const { wavesurfer } = useWavesurfer({
@@ -106,10 +106,16 @@ export const AudioEditor = ({ file }: WaveformProps) => {
     if (!wavesurfer) return null;
 
     const region = regionsPlugin.getRegions()[0];
-    const trimmedBuffer = audioTrimmer.trimAudio(region.start, region.end);
-    const downloadUrl = audioTrimmer.createDownloadLink(
+
+    const trimmedBuffer = audioService.trim(
+      audioService.getBuffer(),
+      audioService.getContext(),
+      region.start,
+      region.end
+    );
+    const downloadUrl = audioService.createDownloadLink(
       trimmedBuffer,
-      `trimmed_${file.file.name}`
+      `trimmed_${track.file.name}`
     );
     return downloadUrl;
   };
@@ -122,7 +128,7 @@ export const AudioEditor = ({ file }: WaveformProps) => {
     const link = document.createElement("a");
     link.style.display = "none";
     link.href = url;
-    link.download = `trimmed_${filenameWithoutExtension(file.file.name)}`;
+    link.download = `trimmed_${filenameWithoutExtension(track.file.name)}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -131,8 +137,8 @@ export const AudioEditor = ({ file }: WaveformProps) => {
 
   // Effects
   useEffect(() => {
-    audioTrimmer.loadAudioFile(file.file);
-  }, [file, audioTrimmer]);
+    audioService.loadFile(track.file);
+  }, [track, audioService]);
 
   useEffect(() => {
     if (!wavesurfer) return;
@@ -200,7 +206,7 @@ export const AudioEditor = ({ file }: WaveformProps) => {
               <div>
                 File:{" "}
                 <i className="text-primary">
-                  {getFile(file.file.name)?.file.name}
+                  {getFile(track.file.name)?.file.name}
                 </i>
               </div>
               <div>

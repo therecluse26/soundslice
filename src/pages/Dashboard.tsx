@@ -2,13 +2,14 @@ import BrowserMultiFileUpload from "@/components/custom/BrowserMultiFileUpload";
 import { AudioEditor } from "@/components/custom/AudioEditor";
 import { useCallback } from "react";
 
-import { AudioFile, useAudioStore } from "@/stores/audio-store";
+import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import MasterToolbar from "@/components/custom/MasterToolbar";
 
 export default function Dashboard() {
-  const { files, setFiles } = useAudioStore();
+  const { tracks: files, setFiles } = useAudioStore();
 
-  const updateFiles = useCallback((files: AudioFile[]) => {
+  const updateFiles = useCallback((files: EditorTrack[]) => {
+    console.log("Updating files...", files);
     setFiles(files);
   }, []);
 
@@ -21,7 +22,7 @@ export default function Dashboard() {
             <MasterToolbar />
             {files.map((file, index) => (
               <div key={index} className={"my-4"}>
-                <AudioEditor file={file} />
+                <AudioEditor track={file} />
               </div>
             ))}
           </div>
