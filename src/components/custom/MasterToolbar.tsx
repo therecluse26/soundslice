@@ -10,7 +10,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileType, useAudioStore } from "@/stores/audio-store";
+import { useAudioStore } from "@/stores/audio-store";
+import { OutputFormat } from "@/lib/audio-trimmer";
+import { DownloadIcon } from "@radix-ui/react-icons";
 
 const MasterToolbar = () => {
   const {
@@ -23,7 +25,7 @@ const MasterToolbar = () => {
   } = useAudioStore();
 
   // Get fileTypes from the store enum
-  const fileTypes = Object.keys(FileType).map((key, value) => ({
+  const fileTypes = Object.keys(OutputFormat).map((key, value) => ({
     name: key,
     value: value,
   }));
@@ -71,13 +73,22 @@ const MasterToolbar = () => {
             </SelectTrigger>
             <SelectContent>
               {fileTypes.map((fileType) => (
-                <SelectItem key={fileType.value} value={fileType.value.toString()}>
+                <SelectItem
+                  key={fileType.value}
+                  value={fileType.value.toString()}
+                >
                   {fileType.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={handleExportFiles}>Export All Files</Button>
+          <Button
+            onClick={handleExportFiles}
+            className="bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
+          >
+            <DownloadIcon />
+            &nbsp;Trim & Download All Files
+          </Button>
         </div>
       </CardContent>
     </Card>

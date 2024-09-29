@@ -1,4 +1,4 @@
-# Audio Trimmer
+# SoundSlice
 
 React + Vite + TypeScript template for building apps with shadcn/ui.
 

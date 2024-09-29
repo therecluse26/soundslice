@@ -7,7 +7,7 @@ interface AppConfig {
 }
 
 export const appConfig: AppConfig = {
-    name: "Audio Trimmer",
+    name: "SoundSlice",
     author: {
         name: "therecluse26",
         url: "https://github.com/therecluse26",

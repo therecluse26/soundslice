@@ -5,27 +5,51 @@ import RegionsPlugin, { Region } from "wavesurfer.js/dist/plugins/regions";
 import TimelinePlugin from "wavesurfer.js/dist/plugins/timeline";
 import resolveConfig from "tailwindcss/resolveConfig";
 import tailwindConfig from "../../../tailwind.config";
-import { Card, CardContent, CardFooter } from "../ui/card";
+import { Card, CardContent } from "../ui/card";
 import { Button } from "../ui/button";
-import { PauseIcon, PlayIcon, ReloadIcon } from "@radix-ui/react-icons";
+import {
+  PauseIcon,
+  PlayIcon,
+  DownloadIcon,
+  ReloadIcon,
+} from "@radix-ui/react-icons";
 import { useTheme } from "@/hooks/useTheme";
 import { AudioFile, useAudioStore } from "@/stores/audio-store";
-import { match } from "assert";
+import { AudioTrimmer } from "@/lib/audio-trimmer";
 
+// Interfaces
+interface WaveformProps {
+  file: AudioFile;
+}
+
+// Utility functions
 const formatTime = (seconds: number) =>
   [seconds / 60, seconds % 60]
     .map((v) => `0${Math.floor(v)}`.slice(-2))
     .join(":");
 
-interface WaveformProps {
-  file: AudioFile;
-}
+const filenameWithoutExtension = (filename: string) => {
+  return filename.split(".").slice(0, -1).join(".");
+};
 
 export const AudioEditor = ({ file }: WaveformProps) => {
+  // Hooks
   const { theme } = useTheme();
+  const { getFile } = useAudioStore();
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
+
+  // Refs
   const audioContainer = useRef(null);
+  const isPlaying = useRef(false);
+  const currentTimeRef = useRef(0);
+
+  // State
+  const [selectionDuration, setSelectionDuration] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  // Memoized values
   const regionsPlugin = useMemo(() => RegionsPlugin.create(), []);
   const hoverPlugin = useMemo(
     () =>
@@ -41,52 +65,74 @@ export const AudioEditor = ({ file }: WaveformProps) => {
   const timelinePlugin = useMemo(() => TimelinePlugin.create(), []);
   const plugins = useMemo(
     () => [regionsPlugin, hoverPlugin, timelinePlugin],
-    []
+    [regionsPlugin, hoverPlugin, timelinePlugin]
   );
   const url = useMemo(() => URL.createObjectURL(file.file), [file]);
-  const { getFile, updateFile } = useAudioStore();
+  const audioTrimmer = useMemo(() => new AudioTrimmer(), []);
 
+  // Wavesurfer setup
   const { wavesurfer } = useWavesurfer({
     container: audioContainer,
     height: 100,
     waveColor: theme === "dark" ? colors.gray[700] : colors.gray[400],
-    // progressColor: "hsl(24.6 95% 50%)",
-    progressColor: theme === "dark" ? colors.red[500] : colors.red[700],
-    // Set a bar width
+    progressColor: theme === "dark" ? colors.red[500] : colors.red[500],
     barWidth: 3,
-    // Optionally, specify the spacing between bars
     barGap: 2,
-    // And the bar radius
     barRadius: 10,
+    sampleRate: 48000,
     url,
     plugins,
   });
 
-  const [selectionDuration, setSelectionDuration] = useState(0);
-  const [ready, setReady] = useState(false);
-  const isPlaying = useRef(false);
-  const currentTimeRef = useRef(0);
-
+  // Callbacks
   const onPlayPause = useCallback(() => {
     wavesurfer && wavesurfer.playPause();
     isPlaying.current = !isPlaying.current;
   }, [wavesurfer]);
 
-  const onUpdatedRegion = useCallback(
-    (region: Region) => {
-      // Update selection duration
-      setSelectionDuration(region.end - region.start);
+  const onUpdatedRegion = useCallback((region: Region) => {
+    setSelectionDuration(region.end - region.start);
 
-      // Check if playhead is within the region, if not, play the region from the start
-      if (
-        isPlaying.current &&
-        (currentTimeRef.current < region.start || currentTimeRef.current > region.end)
-      ) {
-        region.play();
-      }
-    },
-    [setSelectionDuration, currentTimeRef, isPlaying]
-  );
+    if (
+      isPlaying.current &&
+      (currentTimeRef.current < region.start ||
+        currentTimeRef.current > region.end)
+    ) {
+      region.play();
+    }
+  }, []);
+
+  const handleTrimAudio = async () => {
+    if (!wavesurfer) return null;
+
+    const region = regionsPlugin.getRegions()[0];
+    const trimmedBuffer = audioTrimmer.trimAudio(region.start, region.end);
+    const downloadUrl = audioTrimmer.createDownloadLink(
+      trimmedBuffer,
+      `trimmed_${file.file.name}`
+    );
+    return downloadUrl;
+  };
+
+  const downloadTrimmedFile = async () => {
+    setDownloading(true);
+    const url = await handleTrimAudio();
+    if (!url) return;
+
+    const link = document.createElement("a");
+    link.style.display = "none";
+    link.href = url;
+    link.download = `trimmed_${filenameWithoutExtension(file.file.name)}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setDownloading(false);
+  };
+
+  // Effects
+  useEffect(() => {
+    audioTrimmer.loadAudioFile(file.file);
+  }, [file, audioTrimmer]);
 
   useEffect(() => {
     if (!wavesurfer) return;
@@ -96,12 +142,11 @@ export const AudioEditor = ({ file }: WaveformProps) => {
       regionsPlugin.getRegions()[0].play();
     });
 
-    wavesurfer.on('timeupdate', (currentTime) => {
+    wavesurfer.on("timeupdate", (currentTime) => {
       currentTimeRef.current = currentTime;
     });
 
     wavesurfer.on("click", (location) => {
-      // Play the region if the selected location is outside of the region, otherwise, just play the selected location
       const region = regionsPlugin.getRegions()[0];
       const start = region.start / wavesurfer.getDuration();
       const end = region.end / wavesurfer.getDuration();
@@ -121,13 +166,12 @@ export const AudioEditor = ({ file }: WaveformProps) => {
         start: 1,
         end: 100,
         content: "Section to Keep",
-        color: "rgba(26, 48, 70, 0.5)",
-        minLength: 10,
+        color: "rgba(254, 242, 242, 0.25)",
+        minLength: 5,
       });
 
       regionsPlugin.on("region-updated", onUpdatedRegion);
 
-      // Enforce looping, don't allow playback outside of the region
       regionsPlugin.on("region-out", (region) => {
         region.play();
       });
@@ -138,38 +182,60 @@ export const AudioEditor = ({ file }: WaveformProps) => {
     };
   }, [wavesurfer, regionsPlugin, onUpdatedRegion]);
 
-
+  // Render
   return (
     <Card>
       <CardContent className="pt-8 pb-0">
         {!ready && (
           <div className="text-center">
-            <div>
-              Preparing audio...
-            </div>
+            <div>Preparing audio...</div>
           </div>
         )}
 
         <div ref={audioContainer} className="cursor-text" />
 
-        <div className="cursor-default w-full flex justify-between mt-4">
-          <div>
+        {ready && (
+          <div className="cursor-default w-full flex justify-between mt-4">
             <div>
-              File:{" "}
-              <i className="text-primary">
-                {getFile(file.file.name)?.file.name}
-              </i>
+              <div>
+                File:{" "}
+                <i className="text-primary">
+                  {getFile(file.file.name)?.file.name}
+                </i>
+              </div>
+              <div>
+                Selection duration: <code>{formatTime(selectionDuration)}</code>
+              </div>
             </div>
-            <div>
-              Selection duration: <code>{formatTime(selectionDuration)}</code>
+            <div style={{ margin: "1em 0", display: "flex", gap: "1em" }}>
+              <Button
+                onClick={onPlayPause}
+                style={{ minWidth: "5em" }}
+                className="bg-primary-foreground text-primary hover:bg-primary hover:text-primary-foreground"
+              >
+                {isPlaying.current ? <PauseIcon /> : <PlayIcon />}
+              </Button>
+
+              {downloading ? (
+                <>
+                  <Button disabled>
+                    <ReloadIcon className="animate-spin" />
+                    &nbsp; Download Trimmed Audio
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  onClick={downloadTrimmedFile}
+                  style={{ minWidth: "5em" }}
+                  className="bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
+                >
+                  <DownloadIcon />
+                  &nbsp; Download Trimmed Audio
+                </Button>
+              )}
             </div>
           </div>
-          <div style={{ margin: "1em 0", display: "flex", gap: "1em" }}>
-            <Button onClick={onPlayPause} style={{ minWidth: "5em" }}>
-              {isPlaying.current ? <PauseIcon /> : <PlayIcon />}
-            </Button>
-          </div>
-        </div>
+        )}
       </CardContent>
     </Card>
   );
