@@ -43,10 +43,7 @@ const filenameWithoutExtension = (filename: string) => {
 export const AudioEditor = React.memo(({ track }: EditorProps) => {
   // Hooks
   const { theme } = useTheme();
-  const {
-    // getTrack,
-    setTrackSelectedRegion,
-  } = useAudioStore();
+  const { getTrack, setTrackSelectedRegion } = useAudioStore();
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
   const isMobile = useMediaQuery("(max-width: 800px)");
@@ -181,13 +178,16 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
 
     wavesurfer.on("ready", () => {
       setReady(true);
-      regionsPlugin.addRegion({
+      const newRegion = regionsPlugin.addRegion({
         start: 1,
         end: 100,
         content: "Clip",
         color: "rgba(254, 242, 242, 0.25)",
         minLength: 5,
       });
+
+      // Necessary to set region to trim if region is not changed
+      onUpdatedRegion(newRegion);
 
       regionsPlugin.on("region-updated", onUpdatedRegion);
 
@@ -224,9 +224,9 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
             <div>
               <div className={isMobile ? "text-sm" : ""}>
                 File:{" "}
-                {/* <i className="text-primary text-wrap break-all">
+                <i className="text-primary text-wrap break-all">
                   {getTrack(track.file.name)?.file.name}
-                </i> */}
+                </i>
               </div>
               <div className={isMobile ? "text-sm" : ""}>
                 Selection duration: <code>{formatTime(selectionDuration)}</code>

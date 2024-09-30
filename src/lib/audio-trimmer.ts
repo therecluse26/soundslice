@@ -20,6 +20,8 @@ export class AudioTrimmer {
     const duration = endTime - startTime;
     const sampleRate = audioBuffer.sampleRate;
     const numberOfChannels = audioBuffer.numberOfChannels;
+    const fadeDuration = 0.02; // 20ms fade duration
+    const fadeSamples = Math.floor(fadeDuration * sampleRate);
 
     const trimmedBuffer = audioContext.createBuffer(
       numberOfChannels,
@@ -32,8 +34,22 @@ export class AudioTrimmer {
       const trimmedChannelData = trimmedBuffer.getChannelData(channel);
 
       for (let i = 0; i < trimmedBuffer.length; i++) {
-        trimmedChannelData[i] =
-          originalChannelData[i + Math.floor(startTime * sampleRate)];
+        const sourceIndex = i + Math.floor(startTime * sampleRate);
+        let sample = originalChannelData[sourceIndex];
+
+        // Apply fade-in
+        if (i < fadeSamples) {
+          const fadeInFactor = i / fadeSamples;
+          sample *= fadeInFactor;
+        }
+
+        // Apply fade-out
+        if (i >= trimmedBuffer.length - fadeSamples) {
+          const fadeOutFactor = (trimmedBuffer.length - i) / fadeSamples;
+          sample *= fadeOutFactor;
+        }
+
+        trimmedChannelData[i] = sample;
       }
     }
 
