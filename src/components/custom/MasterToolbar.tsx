@@ -13,81 +13,78 @@ import {
 import { useAudioStore } from "@/stores/audio-store";
 import { OutputFormat } from "@/lib/audio-service";
 import { DownloadIcon } from "@radix-ui/react-icons";
+import { useMediaQuery } from "@/lib/use-media-query";
 
 const MasterToolbar = () => {
   const {
-    compressFiles,
-    setCompressFiles,
     normalizeAudio,
     setNormalizeAudio,
     exportFileType,
     setExportFileType,
   } = useAudioStore();
 
-  // Get fileTypes from the store enum
-  const fileTypes = Object.keys(OutputFormat).map((key, value) => ({
-    name: key,
-    value: value,
-  }));
+  const isMobile = useMediaQuery("(max-width: 800px)");
 
   const handleNormalizeChange = (checked: boolean) => {
     setNormalizeAudio(checked);
   };
 
-  const handleCompressChange = (checked: boolean) => {
-    setCompressFiles(checked);
-  };
-
   const handleExportFiles = () => {
-    // Implement export functionality here
     console.log("Exporting all files...");
     console.log("Normalize audio:", normalizeAudio);
+    console.log("Export file type:", exportFileType);
   };
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Control Panel</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="flex justify-between space-x-2">
+      <CardContent className="mt-6">
+        <div
+          className={`flex flex-col space-y-4 ${
+            isMobile
+              ? "flex-col justify-center items-center w-full"
+              : "sm:flex-row sm:justify-center gap-8 sm:space-x-2 sm:space-y-0"
+          }`}
+        >
           <div className="flex items-center space-x-2">
+            <Label>Normalize Audio?</Label>
             <Checkbox
-              id="normalize-audio"
               checked={normalizeAudio}
               onCheckedChange={handleNormalizeChange}
             />
-            <Label htmlFor="normalize-audio">Normalize Audio</Label>
           </div>
           <div className="flex items-center space-x-2">
-            <Checkbox
-              id="compress-audio-files"
-              checked={compressFiles}
-              onCheckedChange={handleCompressChange}
-            />
-            <Label htmlFor="compress-audio-files">Compress File Size</Label>
-          </div>
-          <Select onValueChange={setExportFileType} value={exportFileType}>
-            <SelectTrigger className="w-[400px]">
-              <SelectValue placeholder="Export file Type" />
-            </SelectTrigger>
-            <SelectContent>
-              {fileTypes.map((fileType) => (
+            <Label>Output Format</Label>
+            <Select
+              onValueChange={setExportFileType}
+              defaultValue={exportFileType}
+            >
+              <SelectTrigger className="w-[120px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
                 <SelectItem
-                  key={fileType.value}
-                  value={fileType.value.toString()}
+                  key={`filetype_${OutputFormat.WAV.toString()}`}
+                  value={OutputFormat.WAV.toString()}
                 >
-                  {fileType.name}
+                  {OutputFormat.WAV}
                 </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                <SelectItem
+                  key={`filetype_${OutputFormat.MP3.toString()}`}
+                  value={OutputFormat.MP3.toString()}
+                >
+                  {OutputFormat.MP3}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Button
             onClick={handleExportFiles}
-            className="bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
+            className="w-full sm:w-auto bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
           >
             <DownloadIcon />
-            &nbsp;Trim & Download All Files
+            <span className="ml-2">
+              {isMobile ? "Export All" : "Slice & Download All Files"}
+            </span>
           </Button>
         </div>
       </CardContent>

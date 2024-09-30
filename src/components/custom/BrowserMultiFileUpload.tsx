@@ -227,7 +227,7 @@ export default function BrowserMultiFileUpload({
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center">
                       <FileIcon className="h-4 w-4 mr-2" />
-                      <span className="text-sm font-medium truncate">
+                      <span className="text-sm font-medium truncate text-wrap break-all">
                         {upload.file.name}
                       </span>
                     </div>

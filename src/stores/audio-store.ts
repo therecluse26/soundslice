@@ -13,8 +13,6 @@ interface AudioState {
   addFile: (track: EditorTrack) => void;
   getTrack: (fileName: string) => EditorTrack | undefined;
   updateFile: (track: EditorTrack) => void;
-  compressFiles: boolean;
-  setCompressFiles: (compress: boolean) => void;
   normalizeAudio: boolean;
   setNormalizeAudio: (normalize: boolean) => void;
   exportFileType: OutputFormat;
@@ -34,13 +32,8 @@ export const useAudioStore = create<AudioState>((set, get) => ({
         t.file.name === track.file.name ? track : t
       ),
     })),
-
-  compressFiles: false,
-  setCompressFiles: (compress) => set({ compressFiles: compress }),
-
   normalizeAudio: false,
   setNormalizeAudio: (normalize) => set({ normalizeAudio: normalize }),
-
   exportFileType: OutputFormat.WAV,
   setExportFileType: (fileType) => set({ exportFileType: fileType }),
 }));

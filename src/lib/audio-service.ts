@@ -7,13 +7,8 @@ export enum OutputFormat {
 }
 
 export class AudioService {
-  private file: File;
   private buffer: AudioBuffer | null = null;
   private context = new AudioContext();
-
-  constructor(file: File) {
-    this.file = file;
-  }
 
   public loadFile = async (file: File) => {
     this.buffer = await AudioLoader.loadAudioFile(this.context, file);

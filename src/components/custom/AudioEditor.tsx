@@ -16,6 +16,7 @@ import {
 import { useTheme } from "@/hooks/useTheme";
 import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import { AudioService } from "@/lib/audio-service";
+import { useMediaQuery } from "@/lib/use-media-query";
 
 // Interfaces
 interface EditorProps {
@@ -38,6 +39,7 @@ export const AudioEditor = ({ track }: EditorProps) => {
   const { getTrack: getFile } = useAudioStore();
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
+  const isMobile = useMediaQuery("(max-width: 800px)");
 
   // Refs
   const audioContainer = useRef(null);
@@ -68,16 +70,16 @@ export const AudioEditor = ({ track }: EditorProps) => {
     [regionsPlugin, hoverPlugin, timelinePlugin]
   );
   const url = useMemo(() => URL.createObjectURL(track.file), [track]);
-  const audioService = useMemo(() => new AudioService(track.file), []);
+  const audioService = useMemo(() => new AudioService(), []);
 
   // Wavesurfer setup
   const { wavesurfer } = useWavesurfer({
     container: audioContainer,
-    height: 100,
+    height: isMobile ? 80 : 100,
     waveColor: theme === "dark" ? colors.gray[700] : colors.gray[400],
     progressColor: theme === "dark" ? colors.red[500] : colors.red[500],
-    barWidth: 3,
-    barGap: 2,
+    barWidth: isMobile ? 2 : 3,
+    barGap: isMobile ? 1 : 2,
     barRadius: 10,
     sampleRate: 48000,
     url,
@@ -171,7 +173,7 @@ export const AudioEditor = ({ track }: EditorProps) => {
       regionsPlugin.addRegion({
         start: 1,
         end: 100,
-        content: "Section to Keep",
+        content: "Clip",
         color: "rgba(254, 242, 242, 0.25)",
         minLength: 5,
       });
@@ -191,7 +193,7 @@ export const AudioEditor = ({ track }: EditorProps) => {
   // Render
   return (
     <Card>
-      <CardContent className="pt-8 pb-0">
+      <CardContent className={`pt-8 pb-0 ${isMobile ? "px-2" : "px-6"}`}>
         {!ready && (
           <div className="text-center">
             <div>Preparing audio...</div>
@@ -201,42 +203,57 @@ export const AudioEditor = ({ track }: EditorProps) => {
         <div ref={audioContainer} className="cursor-text" />
 
         {ready && (
-          <div className="cursor-default w-full flex justify-between mt-4">
+          <div
+            className={`cursor-default w-full ${
+              isMobile
+                ? "flex flex-col gap-4 space-y-4"
+                : "flex gap-4 justify-between"
+            } mt-4`}
+          >
             <div>
-              <div>
+              <div className={isMobile ? "text-sm" : ""}>
                 File:{" "}
-                <i className="text-primary">
+                <i className="text-primary text-wrap break-all">
                   {getFile(track.file.name)?.file.name}
                 </i>
               </div>
-              <div>
+              <div className={isMobile ? "text-sm" : ""}>
                 Selection duration: <code>{formatTime(selectionDuration)}</code>
               </div>
             </div>
-            <div style={{ margin: "1em 0", display: "flex", gap: "1em" }}>
+            <div
+              className={`${isMobile ? "flex justify-between" : "flex gap-4"}`}
+            >
               <Button
                 onClick={onPlayPause}
-                style={{ minWidth: "5em" }}
-                className="bg-primary-foreground text-primary hover:bg-primary hover:text-primary-foreground"
+                className={`bg-primary-foreground text-primary hover:bg-primary hover:text-primary-foreground px-4 py-2 ${
+                  isMobile ? "mb-2" : ""
+                }`}
               >
                 {isPlaying.current ? <PauseIcon /> : <PlayIcon />}
               </Button>
 
               {downloading ? (
-                <>
-                  <Button disabled>
-                    <ReloadIcon className="animate-spin" />
-                    &nbsp; Download Trimmed Audio
-                  </Button>
-                </>
+                <Button
+                  disabled
+                  className={isMobile ? "px-4 py-2 text-xs mb-2" : "px-4 py-2"}
+                >
+                  <ReloadIcon className="animate-spin" />
+                  <span className="ml-2">
+                    {isMobile ? "Downloading..." : "Slice Audio"}
+                  </span>
+                </Button>
               ) : (
                 <Button
                   onClick={downloadTrimmedFile}
-                  style={{ minWidth: "5em" }}
-                  className="bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
+                  className={`bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary ${
+                    isMobile ? "px-2 py-1 text-xs" : "px-4 py-2"
+                  }`}
                 >
                   <DownloadIcon />
-                  &nbsp; Download Trimmed Audio
+                  <span className="ml-2">
+                    {isMobile ? "Download" : "Slice Audio"}
+                  </span>
                 </Button>
               )}
             </div>
