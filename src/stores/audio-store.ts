@@ -1,6 +1,7 @@
 import { Region } from "wavesurfer.js/dist/plugins/regions";
 import { create } from "zustand";
 import { OutputFormat } from "@/lib/audio-service";
+import { MutableRefObject } from "react";
 
 export type EditorTrack = {
   file: File;
@@ -8,32 +9,58 @@ export type EditorTrack = {
 };
 
 interface AudioState {
-  tracks: EditorTrack[];
-  setFiles: (tracks: EditorTrack[]) => void;
-  addFile: (track: EditorTrack) => void;
+  tracks: MutableRefObject<EditorTrack[]>;
+
+  setTracks: (tracks: EditorTrack[]) => void;
+  addTrack: (track: EditorTrack) => void;
   getTrack: (fileName: string) => EditorTrack | undefined;
-  updateFile: (track: EditorTrack) => void;
-  normalizeAudio: boolean;
+  setTrackSelectedRegion: (fileName: string, region: Region) => void;
+
+  normalizeAudio: MutableRefObject<boolean>;
   setNormalizeAudio: (normalize: boolean) => void;
-  exportFileType: OutputFormat;
+
+  exportFileType: MutableRefObject<OutputFormat>;
   setExportFileType: (fileType: OutputFormat) => void;
+
+  rerender: number;
+  triggerRerender: () => void;
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
-  tracks: [],
-  setFiles: (tracks: EditorTrack[]) => set({ tracks: tracks }),
-  addFile: (tracks: EditorTrack) =>
-    set((state) => ({ tracks: [...state.tracks, tracks] })),
+  tracks: { current: [] },
+
+  setTracks: (tracks: EditorTrack[]) => {
+    get().tracks.current = tracks;
+  },
+
+  addTrack: (track: EditorTrack) => {
+    get().tracks.current = [...get().tracks.current, track];
+  },
+
   getTrack: (fileName: string) =>
-    get().tracks.find((f) => f.file.name === fileName),
-  updateFile: (track: EditorTrack) =>
-    set((state) => ({
-      tracks: state.tracks.map((t) =>
-        t.file.name === track.file.name ? track : t
-      ),
-    })),
-  normalizeAudio: false,
-  setNormalizeAudio: (normalize) => set({ normalizeAudio: normalize }),
-  exportFileType: OutputFormat.WAV,
-  setExportFileType: (fileType) => set({ exportFileType: fileType }),
+    get().tracks.current.find((f) => f.file.name === fileName),
+
+  setTrackSelectedRegion: (fileName, region) => {
+    get().tracks.current = get().tracks.current.map((track) => {
+      if (track.file.name === fileName) {
+        return { ...track, selectedRegion: region };
+      }
+      return track;
+    });
+  },
+
+  normalizeAudio: { current: false },
+
+  setNormalizeAudio: (normalize: boolean) => {
+    get().normalizeAudio.current = normalize;
+  },
+
+  exportFileType: { current: OutputFormat.WAV },
+
+  setExportFileType: (fileType: OutputFormat) => {
+    get().exportFileType.current = fileType;
+  },
+
+  rerender: 0,
+  triggerRerender: () => set({ rerender: Math.random() }),
 }));

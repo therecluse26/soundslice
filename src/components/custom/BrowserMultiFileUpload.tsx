@@ -12,7 +12,7 @@ interface FileUpload {
 }
 
 interface BrowserMultiFileUploadProps {
-  onUploadComplete?: (files: EditorTrack[]) => void;
+  onUploadComplete?: (tracks: EditorTrack[]) => void;
 }
 
 export default function BrowserMultiFileUpload({

@@ -1,5 +1,9 @@
+import { MutableRefObject } from "react";
 import { AudioLoader } from "./audio-loader";
 import { AudioTrimmer } from "./audio-trimmer";
+import JSZip from "jszip";
+import { EditorTrack } from "@/stores/audio-store";
+import { normalize } from "path";
 
 export enum OutputFormat {
   MP3 = "mp3",
@@ -34,5 +38,56 @@ export class AudioService {
 
   public setContext(context: AudioContext): void {
     this.context = context;
+  }
+
+  public static async downloadAllTrimmedFilesAsZip(
+    tracks: MutableRefObject<EditorTrack[]>,
+    normalize: boolean,
+    exportFileType: OutputFormat
+  ): Promise<string> {
+    const zip = new JSZip();
+    const promises: Promise<void>[] = [];
+
+    for (const track of tracks.current) {
+      if (!track.selectedRegion) continue;
+
+      const tCtx = new AudioContext();
+
+      const tBuffer = await AudioLoader.loadAudioFile(tCtx, track.file);
+
+      const trimmedBuffer = AudioTrimmer.trimAudio(
+        tBuffer,
+        tCtx,
+        track.selectedRegion.start,
+        track.selectedRegion.end
+      );
+
+      // if (normalize) {
+      //     normalizeAudioBuffer(trimmedBuffer);
+      // }
+
+      const downloadUrl = await AudioTrimmer.createDownloadLink(
+        trimmedBuffer,
+        `trimmed_${track.file.name}`,
+        exportFileType
+      );
+      const fileName = `trimmed_${track.file.name}`;
+
+      promises.push(
+        fetch(downloadUrl)
+          .then((response) => response.blob())
+          .then((blob) => {
+            void zip.file(fileName, blob);
+          })
+      );
+
+      tCtx.close();
+    }
+
+    await Promise.all(promises);
+
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    const zipUrl = URL.createObjectURL(zipBlob);
+    return zipUrl;
   }
 }

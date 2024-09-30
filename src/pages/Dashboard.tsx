@@ -6,22 +6,24 @@ import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import MasterToolbar from "@/components/custom/MasterToolbar";
 
 export default function Dashboard() {
-  const { tracks: files, setFiles } = useAudioStore();
+  const { tracks, setTracks, triggerRerender } = useAudioStore();
 
-  const updateFiles = useCallback((files: EditorTrack[]) => {
-    setFiles(files);
+  const updateTrackCallback = useCallback((tracks: EditorTrack[]) => {
+    setTracks(tracks);
+    // trigger re-render, dumb hack to work around updating above refs, but it works
+    triggerRerender();
   }, []);
 
   return (
     <>
       <div>
-        <BrowserMultiFileUpload onUploadComplete={updateFiles} />
-        {files.length > 0 && (
+        <BrowserMultiFileUpload onUploadComplete={updateTrackCallback} />
+        {tracks.current.length > 0 && (
           <div>
             <MasterToolbar />
-            {files.map((file, index) => (
+            {tracks.current.map((track, index) => (
               <div key={index} className={"my-4"}>
-                <AudioEditor track={file} />
+                <AudioEditor track={track} />
               </div>
             ))}
           </div>

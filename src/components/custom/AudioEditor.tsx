@@ -1,4 +1,10 @@
-import { useMemo, useCallback, useRef, useEffect, useState } from "react";
+import React, {
+  useMemo,
+  useCallback,
+  useRef,
+  useEffect,
+  useState,
+} from "react";
 import { useWavesurfer } from "@wavesurfer/react";
 import HoverPlugin from "wavesurfer.js/dist/plugins/hover";
 import RegionsPlugin, { Region } from "wavesurfer.js/dist/plugins/regions";
@@ -17,6 +23,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import { AudioService } from "@/lib/audio-service";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { useShallow } from "zustand/react/shallow";
 
 // Interfaces
 interface EditorProps {
@@ -33,10 +40,13 @@ const filenameWithoutExtension = (filename: string) => {
   return filename.split(".").slice(0, -1).join(".");
 };
 
-export const AudioEditor = ({ track }: EditorProps) => {
+export const AudioEditor = React.memo(({ track }: EditorProps) => {
   // Hooks
   const { theme } = useTheme();
-  const { getTrack: getFile } = useAudioStore();
+  const {
+    // getTrack,
+    setTrackSelectedRegion,
+  } = useAudioStore();
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
   const isMobile = useMediaQuery("(max-width: 800px)");
@@ -93,6 +103,7 @@ export const AudioEditor = ({ track }: EditorProps) => {
   }, [wavesurfer]);
 
   const onUpdatedRegion = useCallback((region: Region) => {
+    setTrackSelectedRegion(track.file.name, region);
     setSelectionDuration(region.end - region.start);
 
     if (
@@ -213,9 +224,9 @@ export const AudioEditor = ({ track }: EditorProps) => {
             <div>
               <div className={isMobile ? "text-sm" : ""}>
                 File:{" "}
-                <i className="text-primary text-wrap break-all">
-                  {getFile(track.file.name)?.file.name}
-                </i>
+                {/* <i className="text-primary text-wrap break-all">
+                  {getTrack(track.file.name)?.file.name}
+                </i> */}
               </div>
               <div className={isMobile ? "text-sm" : ""}>
                 Selection duration: <code>{formatTime(selectionDuration)}</code>
@@ -262,4 +273,4 @@ export const AudioEditor = ({ track }: EditorProps) => {
       </CardContent>
     </Card>
   );
-};
+});
