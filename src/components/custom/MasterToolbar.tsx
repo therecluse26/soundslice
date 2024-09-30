@@ -36,7 +36,7 @@ const MasterToolbar = () => {
   const handleExportFiles = async () => {
     setDownloading(true);
 
-    const respUrl = await AudioService.downloadAllTrimmedFilesAsZip(
+    const respUrl = await AudioService.sliceAllFilesIntoZip(
       tracks,
       normalizeAudio.current,
       exportFileType.current
@@ -50,8 +50,6 @@ const MasterToolbar = () => {
     document.body.removeChild(link);
 
     setDownloading(false);
-
-    console.log("respUrl", respUrl);
   };
 
   return (
@@ -65,7 +63,7 @@ const MasterToolbar = () => {
           }`}
         >
           <div className="flex items-center space-x-2">
-            <Label>Normalize Audio?</Label>
+            <Label>Normalize Levels?</Label>
             <Select
               onValueChange={handleNormalizeChange}
               defaultValue={normalizeAudio.current.toString()}

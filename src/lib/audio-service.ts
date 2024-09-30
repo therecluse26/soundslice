@@ -13,13 +13,26 @@ export enum OutputFormat {
 
 export class AudioService {
   private buffer: AudioBuffer | null = null;
-  private context = new AudioContext();
+  private context = new AudioContext({
+    sampleRate: 44100,
+  });
+
+  private static filenameWithoutExtension = (filename: string) => {
+    return filename.split(".").slice(0, -1).join(".");
+  };
+
+  private static getNewFileName = (
+    fileName: string,
+    extension: string,
+    prefix: string = "sliced_"
+  ) => {
+    return `${prefix}${this.filenameWithoutExtension(fileName)}.${extension}`;
+  };
 
   public loadFile = async (file: File) => {
     this.buffer = await AudioLoader.loadAudioFile(this.context, file);
   };
 
-  public trim = AudioTrimmer.trimAudio;
   public createDownloadLink = AudioTrimmer.createDownloadLink;
 
   public getBuffer(): AudioBuffer {
@@ -41,7 +54,41 @@ export class AudioService {
     this.context = context;
   }
 
-  public static async downloadAllTrimmedFilesAsZip(
+  public static async sliceAudio(
+    track: EditorTrack,
+    normalize: boolean,
+    exportFileType: OutputFormat
+  ): Promise<string | null> {
+    if (!track.selectedRegion) return null;
+
+    const tCtx = new AudioContext({
+      sampleRate: 44100,
+    });
+
+    const tBuffer = await AudioLoader.loadAudioFile(tCtx, track.file);
+
+    let trimmedBuffer = AudioTrimmer.trimAudio(
+      tBuffer,
+      tCtx,
+      track.selectedRegion.start,
+      track.selectedRegion.end
+    );
+
+    const normalizer = new AudioNormalizer(tCtx, trimmedBuffer);
+
+    if (normalize) {
+      trimmedBuffer = await normalizer.compressTargetingRms();
+    }
+    tCtx.close();
+
+    return await AudioTrimmer.createDownloadLink(
+      trimmedBuffer,
+      this.getNewFileName(track.file.name, exportFileType),
+      exportFileType
+    );
+  }
+
+  public static async sliceAllFilesIntoZip(
     tracks: MutableRefObject<EditorTrack[]>,
     normalize: boolean,
     exportFileType: OutputFormat
@@ -52,30 +99,15 @@ export class AudioService {
     for (const track of tracks.current) {
       if (!track.selectedRegion) continue;
 
-      const tCtx = new AudioContext();
-
-      const tBuffer = await AudioLoader.loadAudioFile(tCtx, track.file);
-
-      let trimmedBuffer = AudioTrimmer.trimAudio(
-        tBuffer,
-        tCtx,
-        track.selectedRegion.start,
-        track.selectedRegion.end
-      );
-
-      if (normalize) {
-        trimmedBuffer = new AudioNormalizer(
-          tCtx,
-          trimmedBuffer
-        ).compressTargetingRms();
-      }
-
-      const downloadUrl = await AudioTrimmer.createDownloadLink(
-        trimmedBuffer,
-        `trimmed_${track.file.name}`,
+      const downloadUrl = await this.sliceAudio(
+        track,
+        normalize,
         exportFileType
       );
-      const fileName = `trimmed_${track.file.name}`;
+
+      if (!downloadUrl) continue;
+
+      const fileName = this.getNewFileName(track.file.name, exportFileType);
 
       promises.push(
         fetch(downloadUrl)
@@ -84,8 +116,6 @@ export class AudioService {
             void zip.file(fileName, blob);
           })
       );
-
-      tCtx.close();
     }
 
     await Promise.all(promises);

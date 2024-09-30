@@ -43,7 +43,8 @@ const filenameWithoutExtension = (filename: string) => {
 export const AudioEditor = React.memo(({ track }: EditorProps) => {
   // Hooks
   const { theme } = useTheme();
-  const { getTrack, setTrackSelectedRegion } = useAudioStore();
+  const { getTrack, setTrackSelectedRegion, normalizeAudio, exportFileType } =
+    useAudioStore();
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
   const isMobile = useMediaQuery("(max-width: 800px)");
@@ -88,7 +89,7 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     barWidth: isMobile ? 2 : 3,
     barGap: isMobile ? 1 : 2,
     barRadius: 10,
-    sampleRate: 48000,
+    sampleRate: 44100,
     url,
     plugins,
   });
@@ -112,32 +113,18 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     }
   }, []);
 
-  const handleTrimAudio = async () => {
-    if (!wavesurfer) return null;
-
-    const region = regionsPlugin.getRegions()[0];
-
-    const trimmedBuffer = audioService.trim(
-      audioService.getBuffer(),
-      audioService.getContext(),
-      region.start,
-      region.end
-    );
-    const downloadUrl = audioService.createDownloadLink(
-      trimmedBuffer,
-      `trimmed_${track.file.name}`
-    );
-    return downloadUrl;
-  };
-
   const downloadTrimmedFile = async () => {
     setDownloading(true);
-    const url = await handleTrimAudio();
-    if (!url) return;
+    const blobUrl = await AudioService.sliceAudio(
+      getTrack(track.file.name)!,
+      normalizeAudio.current,
+      exportFileType.current
+    );
+    if (!blobUrl) return;
 
     const link = document.createElement("a");
     link.style.display = "none";
-    link.href = url;
+    link.href = blobUrl;
     link.download = `trimmed_${filenameWithoutExtension(track.file.name)}`;
     document.body.appendChild(link);
     link.click();

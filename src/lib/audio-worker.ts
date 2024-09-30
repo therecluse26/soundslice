@@ -107,7 +107,7 @@ function bufferToMp3(buffer: any): Blob {
   const mp3Encoder = new lamejs.Mp3Encoder(
     buffer.numberOfChannels,
     buffer.sampleRate,
-    256
+    320
   );
 
   const leftData = buffer.channelData[0];
