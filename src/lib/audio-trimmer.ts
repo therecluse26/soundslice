@@ -9,13 +9,18 @@ enum Int16Limits {
 export class AudioTrimmer {
   static trimAudio(
     audioBuffer: AudioBuffer,
-    audioContext: AudioContext,
     startTime: number,
     endTime: number
   ): AudioBuffer {
     if (!audioBuffer) {
       throw new Error("No audio file loaded");
     }
+
+    const audioContext = new OfflineAudioContext(
+      audioBuffer.numberOfChannels,
+      audioBuffer.length,
+      audioBuffer.sampleRate
+    );
 
     const duration = endTime - startTime;
     const sampleRate = audioBuffer.sampleRate;

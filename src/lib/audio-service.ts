@@ -3,7 +3,6 @@ import { AudioLoader } from "./audio-loader";
 import { AudioTrimmer } from "./audio-trimmer";
 import JSZip from "jszip";
 import { EditorTrack } from "@/stores/audio-store";
-import { normalize } from "path";
 import { AudioNormalizer } from "./audio-normalizer";
 
 export enum OutputFormat {
@@ -13,9 +12,6 @@ export enum OutputFormat {
 
 export class AudioService {
   private buffer: AudioBuffer | null = null;
-  private context = new AudioContext({
-    sampleRate: 44100,
-  });
 
   private static filenameWithoutExtension = (filename: string) => {
     return filename.split(".").slice(0, -1).join(".");
@@ -30,29 +26,10 @@ export class AudioService {
   };
 
   public loadFile = async (file: File) => {
-    this.buffer = await AudioLoader.loadAudioFile(this.context, file);
+    this.buffer = await AudioLoader.loadAudioFile(file);
   };
 
   public createDownloadLink = AudioTrimmer.createDownloadLink;
-
-  public getBuffer(): AudioBuffer {
-    if (!this.buffer) {
-      throw new Error("No audio file loaded");
-    }
-    return this.buffer;
-  }
-
-  public getContext(): AudioContext {
-    return this.context;
-  }
-
-  public setBuffer(buffer: AudioBuffer): void {
-    this.buffer = buffer;
-  }
-
-  public setContext(context: AudioContext): void {
-    this.context = context;
-  }
 
   public static async sliceAudio(
     track: EditorTrack,
@@ -61,25 +38,19 @@ export class AudioService {
   ): Promise<string | null> {
     if (!track.selectedRegion) return null;
 
-    const tCtx = new AudioContext({
-      sampleRate: 44100,
-    });
-
-    const tBuffer = await AudioLoader.loadAudioFile(tCtx, track.file);
+    const tBuffer = await AudioLoader.loadAudioFile(track.file);
 
     let trimmedBuffer = AudioTrimmer.trimAudio(
       tBuffer,
-      tCtx,
       track.selectedRegion.start,
       track.selectedRegion.end
     );
 
-    const normalizer = new AudioNormalizer(tCtx, trimmedBuffer);
+    const normalizer = new AudioNormalizer(trimmedBuffer);
 
     if (normalize) {
       trimmedBuffer = await normalizer.compressTargetingRms();
     }
-    tCtx.close();
 
     return await AudioTrimmer.createDownloadLink(
       trimmedBuffer,

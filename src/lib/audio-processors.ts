@@ -22,13 +22,11 @@ export function getRms(buffer: AudioBuffer): number {
  *
  * @param buffer - The input AudioBuffer to which gain will be applied.
  * @param gain - The gain factor to apply. 1 is unity gain, <1 reduces volume, >1 increases volume.
- * @param context - Optional AudioContext. If not provided, a new one will be created.
  * @returns A Promise that resolves to the gain-adjusted AudioBuffer.
  */
 export async function gain(
   buffer: AudioBuffer,
-  gain: number,
-  context: AudioContext = new AudioContext()
+  gain: number
 ): Promise<AudioBuffer> {
   const offlineContext = new OfflineAudioContext(
     buffer.numberOfChannels,
@@ -59,15 +57,19 @@ export async function gain(
  * @param buffer - The input AudioBuffer to be compressed.
  * @param threshold - The decibel value above which the compression will start to be applied.
  * @param ratio - The amount of change in output for a given change in input above the threshold.
- * @param context - Optional AudioContext. If not provided, a new one will be created.
  * @returns A Promise that resolves to the compressed AudioBuffer.
  */
 export async function compress(
   buffer: AudioBuffer,
   threshold: number,
-  ratio: number,
-  context: AudioContext = new AudioContext()
+  ratio: number
 ): Promise<AudioBuffer> {
+  const context = new OfflineAudioContext(
+    buffer.numberOfChannels,
+    buffer.length,
+    buffer.sampleRate
+  );
+
   const sourceNode = context.createBufferSource();
   sourceNode.buffer = buffer;
 
@@ -117,32 +119,30 @@ export async function compress(
  *
  * @param buffer - The input AudioBuffer to be limited.
  * @param threshold - The maximum absolute value that the audio samples can have. Default is 0.95.
- * @param context - Optional AudioContext. If not provided, a new one will be created.
  * @returns A Promise that resolves to the limited AudioBuffer.
  */
 export async function hardLimit(
   buffer: AudioBuffer,
-  threshold: number = 0.95,
-  context: AudioContext = new AudioContext()
+  threshold: number = 0.9
 ): Promise<AudioBuffer> {
-  const offlineContext = new OfflineAudioContext(
+  const context = new OfflineAudioContext(
     buffer.numberOfChannels,
     buffer.length,
     buffer.sampleRate
   );
 
-  const sourceNode = offlineContext.createBufferSource();
+  const sourceNode = context.createBufferSource();
   sourceNode.buffer = buffer;
 
-  const waveShaperNode = offlineContext.createWaveShaper();
+  const waveShaperNode = context.createWaveShaper();
   waveShaperNode.curve = createHardLimitCurve(threshold);
 
   sourceNode.connect(waveShaperNode);
-  waveShaperNode.connect(offlineContext.destination);
+  waveShaperNode.connect(context.destination);
 
   sourceNode.start(0);
 
-  const renderedBuffer = await offlineContext.startRendering();
+  const renderedBuffer = await context.startRendering();
   return renderedBuffer;
 }
 
@@ -175,13 +175,9 @@ function createHardLimitCurve(threshold: number): Float32Array {
  * It processes the audio offline for efficiency and to handle audio of any length.
  *
  * @param buffer - The input AudioBuffer to be normalized.
- * @param context - Optional AudioContext. If not provided, a new one will be created.
  * @returns A Promise that resolves to the normalized AudioBuffer.
  */
-export async function normalize(
-  buffer: AudioBuffer,
-  context: AudioContext = new AudioContext()
-): Promise<AudioBuffer> {
+export async function normalize(buffer: AudioBuffer): Promise<AudioBuffer> {
   const offlineContext = new OfflineAudioContext(
     buffer.numberOfChannels,
     buffer.length,
