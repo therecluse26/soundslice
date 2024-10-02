@@ -1,18 +1,8 @@
-// Make this an npm package
-
-export function getRms(buffer: AudioBuffer): number {
-  let sum = 0;
-  const totalSamples = buffer.length * buffer.numberOfChannels;
-
-  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < buffer.length; i++) {
-      sum += channelData[i] * channelData[i];
-    }
-  }
-
-  return Math.sqrt(sum / totalSamples);
-}
+type PostProcessingProps = {
+  normalize: boolean;
+  compress: boolean;
+  trimSilence: boolean;
+};
 
 /**
  * Applies a gain (volume adjustment) to an AudioBuffer using Web Audio API.
@@ -61,25 +51,9 @@ export async function gain(
  */
 export async function compress(
   buffer: AudioBuffer,
-  threshold: number,
-  ratio: number
+  threshold: number = -8,
+  ratio: number = 4
 ): Promise<AudioBuffer> {
-  const context = new OfflineAudioContext(
-    buffer.numberOfChannels,
-    buffer.length,
-    buffer.sampleRate
-  );
-
-  const sourceNode = context.createBufferSource();
-  sourceNode.buffer = buffer;
-
-  const compressor = context.createDynamicsCompressor();
-  compressor.threshold.setValueAtTime(threshold, context.currentTime);
-  compressor.ratio.setValueAtTime(ratio, context.currentTime);
-  compressor.knee.setValueAtTime(0, context.currentTime);
-  compressor.attack.setValueAtTime(0, context.currentTime);
-  compressor.release.setValueAtTime(0, context.currentTime);
-
   const offlineContext = new OfflineAudioContext(
     buffer.numberOfChannels,
     buffer.length,
@@ -96,8 +70,8 @@ export async function compress(
   );
   offlineCompressor.ratio.setValueAtTime(ratio, offlineContext.currentTime);
   offlineCompressor.knee.setValueAtTime(0, offlineContext.currentTime);
-  offlineCompressor.attack.setValueAtTime(0, offlineContext.currentTime);
-  offlineCompressor.release.setValueAtTime(0, offlineContext.currentTime);
+  offlineCompressor.attack.setValueAtTime(0.008, offlineContext.currentTime); // 8 ms attack
+  offlineCompressor.release.setValueAtTime(0.05, offlineContext.currentTime); // 50 ms release
 
   offlineSource.connect(offlineCompressor);
   offlineCompressor.connect(offlineContext.destination);
@@ -109,62 +83,43 @@ export async function compress(
 }
 
 /**
- * Applies hard limiting to an AudioBuffer using Web Audio API.
+ * Applies limiting to an AudioBuffer using Web Audio API.
  *
- * This function uses a WaveShaperNode with a custom curve to implement hard limiting.
- * It processes the audio offline for efficiency and to handle audio of any length.
- *
- * Hard limiting clamps the audio signal to a specified threshold, preventing it from
+ * Limiting clamps the audio signal to a specified threshold, preventing it from
  * exceeding this level in either the positive or negative direction.
  *
  * @param buffer - The input AudioBuffer to be limited.
  * @param threshold - The maximum absolute value that the audio samples can have. Default is 0.95.
  * @returns A Promise that resolves to the limited AudioBuffer.
  */
-export async function hardLimit(
+export async function limit(
   buffer: AudioBuffer,
-  threshold: number = 0.9
+  threshold: number = -2
 ): Promise<AudioBuffer> {
-  const context = new OfflineAudioContext(
+  const audioContext = new OfflineAudioContext(
     buffer.numberOfChannels,
     buffer.length,
     buffer.sampleRate
   );
 
-  const sourceNode = context.createBufferSource();
+  const sourceNode = audioContext.createBufferSource();
   sourceNode.buffer = buffer;
 
-  const waveShaperNode = context.createWaveShaper();
-  waveShaperNode.curve = createHardLimitCurve(threshold);
+  const compressor = audioContext.createDynamicsCompressor();
+  compressor.threshold.setValueAtTime(threshold, audioContext.currentTime);
+  compressor.knee.setValueAtTime(0, audioContext.currentTime); // Hard knee for more precise limiting
+  compressor.ratio.setValueAtTime(20, audioContext.currentTime); // High ratio for limiting
+  compressor.attack.setValueAtTime(0.003, audioContext.currentTime); // 3 ms attack
+  compressor.release.setValueAtTime(0.05, audioContext.currentTime); // 50 ms release
 
-  sourceNode.connect(waveShaperNode);
-  waveShaperNode.connect(context.destination);
+  sourceNode.connect(compressor);
+  compressor.connect(audioContext.destination);
 
   sourceNode.start(0);
 
-  const renderedBuffer = await context.startRendering();
-  return renderedBuffer;
-}
-
-/**
- * Creates a curve for the WaveShaper node to implement hard limiting.
- *
- * This function generates a Float32Array representing a transfer function
- * that clamps values to the specified threshold.
- *
- * @param threshold - The maximum absolute value for the curve.
- * @returns A Float32Array representing the hard limit curve.
- */
-function createHardLimitCurve(threshold: number): Float32Array {
-  const curve = new Float32Array(2048);
-  const range = 1;
-
-  for (let i = 0; i < curve.length; i++) {
-    const x = (i / (curve.length - 1)) * 2 - 1;
-    curve[i] = Math.max(Math.min(x, threshold), -threshold);
-  }
-
-  return curve;
+  return audioContext.startRendering().then((renderedBuffer) => {
+    return renderedBuffer;
+  });
 }
 
 /**
@@ -226,3 +181,67 @@ function getMaxAmplitude(buffer: AudioBuffer): number {
 
   return maxAmplitude;
 }
+
+async function applyEffect(
+  buffer: AudioBuffer,
+  effectName: string
+): Promise<AudioBuffer> {
+  switch (effectName) {
+    case "normalize":
+      return await normalize(buffer);
+    case "compress":
+      return await compress(buffer);
+    case "limit":
+      return await limit(buffer);
+    case "trimSilence":
+      return buffer;
+    default:
+      throw new Error(`Unknown effect: ${effectName}`);
+  }
+}
+
+export async function applyPostProcessing(
+  inputBuffer: AudioBuffer,
+  {
+    normalize: audioNormalize,
+    compress: audioCompress,
+    trimSilence: audioTrimSilence,
+  }: PostProcessingProps = {
+    normalize: false,
+    compress: false,
+    trimSilence: false,
+  }
+): Promise<AudioBuffer> {
+  // Define the processing pipeline, order matters
+  const pipeline = [
+    { name: "normalize", enabled: audioNormalize },
+
+    { name: "compress", enabled: audioCompress },
+
+    // Normalize again after compression (does nothing if compress is false)
+    { name: "normalize", enabled: audioNormalize },
+
+    { name: "trimSilence", enabled: audioTrimSilence },
+
+    // Always limit to prevent clipping at the end
+    { name: "limit", enabled: true },
+  ];
+
+  for (const step of pipeline) {
+    if (step.enabled) {
+      inputBuffer = await applyEffect(inputBuffer, step.name);
+    }
+  }
+
+  // Always limit the audio to prevent clipping, no reason not to
+  return inputBuffer;
+}
+
+export default {
+  gain,
+  compress,
+  limit,
+  normalize,
+  applyEffect,
+  applyPostProcessing,
+};

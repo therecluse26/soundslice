@@ -3,7 +3,7 @@ import { AudioLoader } from "./audio-loader";
 import { AudioTrimmer } from "./audio-trimmer";
 import JSZip from "jszip";
 import { EditorTrack } from "@/stores/audio-store";
-import { AudioNormalizer } from "./audio-normalizer";
+import { applyPostProcessing } from "@/lib/audio-processors";
 
 export enum OutputFormat {
   MP3 = "mp3",
@@ -46,10 +46,13 @@ export class AudioService {
       track.selectedRegion.end
     );
 
-    const normalizer = new AudioNormalizer(trimmedBuffer);
-
     if (normalize) {
-      trimmedBuffer = await normalizer.compressTargetingRms();
+      // TODO: Make these all configurable
+      trimmedBuffer = await applyPostProcessing(trimmedBuffer, {
+        normalize: normalize,
+        compress: normalize,
+        trimSilence: normalize,
+      });
     }
 
     return await AudioTrimmer.createDownloadLink(
