@@ -182,6 +182,101 @@ function getMaxAmplitude(buffer: AudioBuffer): number {
   return maxAmplitude;
 }
 
+export async function trimSilence(
+  buffer: AudioBuffer,
+  threshold: number = -25,
+  minSilenceDuration: number = 0.7,
+  gapDuration: number = 0.3,
+  fadeDuration: number = 0.015
+): Promise<AudioBuffer> {
+  const offlineContext = new OfflineAudioContext(
+    buffer.numberOfChannels,
+    buffer.length,
+    buffer.sampleRate
+  );
+
+  const sourceNode = offlineContext.createBufferSource();
+  sourceNode.buffer = buffer;
+
+  const analyser = offlineContext.createAnalyser();
+  analyser.fftSize = 2048;
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Float32Array(bufferLength);
+
+  sourceNode.connect(analyser);
+  analyser.connect(offlineContext.destination);
+
+  sourceNode.start(0);
+
+  const silenceThreshold = Math.pow(10, threshold / 20);
+  const minSilenceSamples = minSilenceDuration * buffer.sampleRate;
+  const gapSamples = gapDuration * buffer.sampleRate;
+  const fadeSamples = fadeDuration * buffer.sampleRate;
+
+  let nonSilentSegments: [number, number][] = [];
+  let silenceStart = 0;
+  let isInSilence = true;
+
+  for (let i = 0; i < buffer.length; i += bufferLength) {
+    analyser.getFloatTimeDomainData(dataArray);
+    const rms = Math.sqrt(
+      dataArray.reduce((sum, val) => sum + val * val, 0) / bufferLength
+    );
+
+    if (rms > silenceThreshold) {
+      if (isInSilence && i - silenceStart >= minSilenceSamples) {
+        nonSilentSegments.push([Math.max(0, i - fadeSamples), buffer.length]);
+      }
+      isInSilence = false;
+    } else if (!isInSilence) {
+      nonSilentSegments[nonSilentSegments.length - 1][1] = i + fadeSamples;
+      silenceStart = i;
+      isInSilence = true;
+    }
+  }
+
+  const totalDuration =
+    nonSilentSegments.reduce((sum, [start, end]) => sum + (end - start), 0) +
+    (nonSilentSegments.length - 1) * gapSamples;
+
+  const trimmedContext = new OfflineAudioContext(
+    buffer.numberOfChannels,
+    totalDuration,
+    buffer.sampleRate
+  );
+
+  let currentTime = 0;
+  for (let i = 0; i < nonSilentSegments.length; i++) {
+    const [start, end] = nonSilentSegments[i];
+    const segmentDuration = (end - start) / buffer.sampleRate;
+
+    const segmentSource = trimmedContext.createBufferSource();
+    segmentSource.buffer = buffer;
+
+    const gainNode = trimmedContext.createGain();
+    segmentSource.connect(gainNode);
+    gainNode.connect(trimmedContext.destination);
+
+    segmentSource.start(
+      currentTime,
+      start / buffer.sampleRate,
+      segmentDuration
+    );
+
+    gainNode.gain.setValueAtTime(0, currentTime);
+    gainNode.gain.linearRampToValueAtTime(1, currentTime + fadeDuration);
+    gainNode.gain.setValueAtTime(
+      1,
+      currentTime + segmentDuration - fadeDuration
+    );
+    gainNode.gain.linearRampToValueAtTime(0, currentTime + segmentDuration);
+
+    currentTime += segmentDuration + gapDuration;
+  }
+
+  return trimmedContext.startRendering();
+}
+
 /**
  * Applies a specified effect to an AudioBuffer.
  * This function is a wrapper around the specific effect functions.
@@ -203,7 +298,7 @@ async function applyEffect(
     case "limit":
       return await limit(buffer);
     case "trimSilence":
-      return buffer;
+      return await trimSilence(buffer);
     default:
       throw new Error(`Unknown effect: ${effectName}`);
   }
@@ -236,12 +331,12 @@ export async function applyProcessingPipeline(
   const pipeline = [
     { name: "normalize", enabled: audioNormalize },
 
+    { name: "trimSilence", enabled: audioTrimSilence },
+
     { name: "compress", enabled: audioCompress },
 
     // Normalize again after compression (does nothing if compress is false)
     { name: "normalize", enabled: audioNormalize },
-
-    { name: "trimSilence", enabled: audioTrimSilence },
 
     // Always limit to prevent clipping at the end
     { name: "limit", enabled: true },
@@ -262,6 +357,7 @@ export default {
   compress,
   limit,
   normalize,
+  trimSilence,
   applyEffect,
   applyProcessingPipeline,
 };

@@ -23,9 +23,9 @@ const MasterToolbar = () => {
     applyPostProcessing,
     setApplyPostProcessing,
     trimSilence,
-    setTrimSilence,
     exportFileType,
     setExportFileType,
+    setProcessingLoading,
   } = useAudioStore();
 
   const [downloading, setDownloading] = useState(false);
@@ -34,23 +34,27 @@ const MasterToolbar = () => {
 
   const handleExportFiles = async () => {
     setDownloading(true);
+    setProcessingLoading(true);
 
-    const respUrl = await AudioService.sliceAllFilesIntoZip(
-      tracks,
-      normalizeAudio.current,
-      applyPostProcessing.current,
-      trimSilence.current,
-      exportFileType.current
-    );
+    try {
+      const respUrl = await AudioService.sliceAllFilesIntoZip(
+        tracks,
+        normalizeAudio.current,
+        applyPostProcessing.current,
+        trimSilence.current,
+        exportFileType.current
+      );
 
-    const link = document.createElement("a");
-    link.style.display = "none";
-    link.href = respUrl;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    setDownloading(false);
+      const link = document.createElement("a");
+      link.style.display = "none";
+      link.href = respUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } finally {
+      setProcessingLoading(false);
+      setDownloading(false);
+    }
   };
 
   return (
@@ -98,7 +102,7 @@ const MasterToolbar = () => {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex flex-col w-full space-y-2">
+          {/* <div className="flex flex-col w-full space-y-2">
             <Label className="w-full">Trim Silence?</Label>
             <Select
               onValueChange={(checked) => {
@@ -114,7 +118,7 @@ const MasterToolbar = () => {
                 <SelectItem value={"false"}>No</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+          </div> */}
           <div className="flex flex-col w-full space-y-2">
             <Label className="w-full">Output Format</Label>
             <Select

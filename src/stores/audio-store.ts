@@ -30,6 +30,9 @@ interface AudioState {
 
   rerender: number;
   triggerRerender: () => void;
+
+  processingLoading: boolean;
+  setProcessingLoading: (loading: boolean) => void;
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
@@ -81,4 +84,9 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   rerender: 0,
   triggerRerender: () => set({ rerender: Math.random() }),
+
+  processingLoading: false,
+
+  setProcessingLoading: (loading: boolean) =>
+    set({ processingLoading: loading }),
 }));

@@ -43,8 +43,14 @@ const filenameWithoutExtension = (filename: string) => {
 export const AudioEditor = React.memo(({ track }: EditorProps) => {
   // Hooks
   const { theme } = useTheme();
-  const { getTrack, setTrackSelectedRegion, normalizeAudio, exportFileType } =
-    useAudioStore();
+  const {
+    getTrack,
+    setTrackSelectedRegion,
+    normalizeAudio,
+    applyPostProcessing,
+    trimSilence,
+    exportFileType,
+  } = useAudioStore();
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
   const isMobile = useMediaQuery("(max-width: 800px)");
@@ -118,6 +124,8 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     const blobUrl = await AudioService.sliceAudio(
       getTrack(track.file.name)!,
       normalizeAudio.current,
+      applyPostProcessing.current,
+      trimSilence.current,
       exportFileType.current
     );
     if (!blobUrl) return;

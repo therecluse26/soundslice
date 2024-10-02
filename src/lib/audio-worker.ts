@@ -103,6 +103,33 @@ function bufferToWav(buffer: any): Blob {
   return new Blob([wavBuffer], { type: "audio/wav" });
 }
 
+// function bufferToMp3(buffer: any): Blob {
+//   const mp3Encoder = new lamejs.Mp3Encoder(
+//     buffer.numberOfChannels,
+//     buffer.sampleRate,
+//     320
+//   );
+
+//   const leftData = buffer.channelData[0];
+//   const rightData =
+//     buffer.numberOfChannels > 1 ? buffer.channelData[1] : leftData;
+
+//   const left = new Int16Array(leftData.length);
+//   const right = new Int16Array(rightData.length);
+
+//   for (let i = 0; i < leftData.length; i++) {
+//     left[i] = Math.max(-1, Math.min(1, leftData[i])) * 0x7fff;
+//     right[i] = Math.max(-1, Math.min(1, rightData[i])) * 0x7fff;
+//   }
+
+//   const mp3Data = mp3Encoder.encodeBuffer(left, right);
+//   const finalMp3Data = mp3Encoder.flush();
+
+//   return new Blob([new Uint8Array(mp3Data), new Uint8Array(finalMp3Data)], {
+//     type: "audio/mp3",
+//   });
+// }
+
 function bufferToMp3(buffer: any): Blob {
   const mp3Encoder = new lamejs.Mp3Encoder(
     buffer.numberOfChannels,
@@ -113,19 +140,39 @@ function bufferToMp3(buffer: any): Blob {
   const leftData = buffer.channelData[0];
   const rightData =
     buffer.numberOfChannels > 1 ? buffer.channelData[1] : leftData;
+  const length = leftData.length;
 
-  const left = new Int16Array(leftData.length);
-  const right = new Int16Array(rightData.length);
+  const left = new Int16Array(length);
+  const right = new Int16Array(length);
 
-  for (let i = 0; i < leftData.length; i++) {
-    left[i] = Math.max(-1, Math.min(1, leftData[i])) * 0x7fff;
-    right[i] = Math.max(-1, Math.min(1, rightData[i])) * 0x7fff;
+  // Pre-calculate the scaling factor
+  const scaleFactor = 0x7fff;
+
+  // Use a single loop for both channels
+  for (let i = 0; i < length; i++) {
+    left[i] = Math.round(Math.max(-1, Math.min(1, leftData[i])) * scaleFactor);
+    right[i] = Math.round(
+      Math.max(-1, Math.min(1, rightData[i])) * scaleFactor
+    );
   }
 
-  const mp3Data = mp3Encoder.encodeBuffer(left, right);
-  const finalMp3Data = mp3Encoder.flush();
+  // Encode in chunks to avoid large memory allocations
+  const chunkSize = 1152; // MPEG-1 Layer 3 frame size
+  const mp3Chunks = [];
 
-  return new Blob([new Uint8Array(mp3Data), new Uint8Array(finalMp3Data)], {
-    type: "audio/mp3",
-  });
+  for (let i = 0; i < length; i += chunkSize) {
+    const leftChunk = left.subarray(i, i + chunkSize);
+    const rightChunk = right.subarray(i, i + chunkSize);
+    mp3Chunks.push(mp3Encoder.encodeBuffer(leftChunk, rightChunk));
+  }
+
+  mp3Chunks.push(mp3Encoder.flush());
+
+  // Use Uint8Array.from for more efficient array creation
+  return new Blob(
+    mp3Chunks.map((chunk) => Uint8Array.from(chunk)),
+    {
+      type: "audio/mp3",
+    }
+  );
 }

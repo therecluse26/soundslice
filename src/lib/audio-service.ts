@@ -38,7 +38,7 @@ export class AudioService {
     trimSilence: boolean,
     exportFileType: OutputFormat
   ): Promise<string | null> {
-    if (!track.selectedRegion) return null;
+    if (!track?.selectedRegion) return null;
 
     const tBuffer = await AudioLoader.loadAudioFile(track.file);
 
