@@ -3,21 +3,52 @@ import { AudioLoader } from "./audio-loader";
 import { AudioTrimmer } from "./audio-trimmer";
 import JSZip from "jszip";
 import { EditorTrack } from "@/stores/audio-store";
-import { applyProcessingPipeline } from "@/lib/audio-processors";
+import AudioSlicerWorkletUrl from "./audio-slicer-worklet?worker&url";
 
 export enum OutputFormat {
   MP3 = "mp3",
   WAV = "wav",
 }
 
+export type SliceAudioParams = {
+  track: {
+    file: File;
+    selectedRegion?: { start: number; end: number };
+  };
+  normalize: boolean;
+  applyPostProcessing: boolean;
+  trimSilence: boolean;
+};
+
 export class AudioService {
   private buffer: AudioBuffer | null = null;
+  private audioContext: AudioContext;
+  private workletNode: AudioWorkletNode | null = null;
+
+  constructor() {
+    this.audioContext = new AudioContext();
+  }
+
+  async setupAudioWorklet(params: SliceAudioParams) {
+    if (!this.workletNode) {
+      await this.audioContext.audioWorklet.addModule(AudioSlicerWorkletUrl);
+      this.workletNode = new AudioWorkletNode(
+        this.audioContext,
+        "audio-slicer-worklet"
+      );
+      this.workletNode.port.postMessage({
+        action: "setParameters",
+        parameters: params,
+      });
+      this.workletNode.connect(this.audioContext.destination);
+    }
+  }
 
   private static filenameWithoutExtension = (filename: string) => {
     return filename.split(".").slice(0, -1).join(".");
   };
 
-  private static getNewFileName = (
+  public static getNewFileName = (
     fileName: string,
     extension: string,
     prefix: string = "sliced_"
@@ -31,40 +62,96 @@ export class AudioService {
 
   public createDownloadLink = AudioTrimmer.createDownloadLink;
 
-  public static async sliceAudio(
+  async sliceAudio(
     track: EditorTrack,
     normalize: boolean,
     applyPostProcessing: boolean,
     trimSilence: boolean,
     exportFileType: OutputFormat
   ): Promise<string | null> {
-    if (!track?.selectedRegion) return null;
+    await this.setupAudioWorklet({
+      track: {
+        file: track.file,
+        selectedRegion: {
+          start: track.selectedRegion?.start || 0,
+          end: track.selectedRegion?.end || 0,
+        },
+      },
+      normalize,
+      applyPostProcessing,
+      trimSilence,
+    });
 
+    if (!track?.selectedRegion) {
+      console.error("No selected region in track");
+      return null;
+    }
+
+    console.error("Loading audio file");
     const tBuffer = await AudioLoader.loadAudioFile(track.file);
+    console.error("Audio file loaded");
 
+    // Trim audio
+
+    console.error("Trimming audio");
     let trimmedBuffer = AudioTrimmer.trimAudio(
       tBuffer,
       track.selectedRegion.start,
       track.selectedRegion.end
     );
+    console.error("Audio trimmed");
 
-    if (normalize) {
-      // TODO: Make these all configurable
-      trimmedBuffer = await applyProcessingPipeline(trimmedBuffer, {
-        normalize: normalize,
-        compress: applyPostProcessing,
-        trimSilence: trimSilence,
-      });
-    }
+    // Create a buffer source from the trimmed buffer
+    const source = this.audioContext.createBufferSource();
+    source.buffer = trimmedBuffer;
 
-    return await AudioTrimmer.createDownloadLink(
-      trimmedBuffer,
-      this.getNewFileName(track.file.name, exportFileType),
-      exportFileType
+    // Connect the source to the worklet node
+    source.connect(this.workletNode!);
+    this.workletNode!.connect(this.audioContext.destination);
+
+    // Set parameters for the worklet
+    this.workletNode!.parameters.get("start")!.setValueAtTime(
+      track.selectedRegion.start,
+      this.audioContext.currentTime
     );
+    this.workletNode!.parameters.get("end")!.setValueAtTime(
+      track.selectedRegion.end,
+      this.audioContext.currentTime
+    );
+    this.workletNode!.parameters.get("fileName")!.setValueAtTime(
+      0,
+      this.audioContext.currentTime
+    );
+
+    this.workletNode!.parameters.get("normalize")!.setValueAtTime(
+      normalize ? 1 : 0,
+      this.audioContext.currentTime
+    );
+    this.workletNode!.parameters.get("applyPostProcessing")!.setValueAtTime(
+      applyPostProcessing ? 1 : 0,
+      this.audioContext.currentTime
+    );
+    this.workletNode!.parameters.get("trimSilence")!.setValueAtTime(
+      trimSilence ? 1 : 0,
+      this.audioContext.currentTime
+    );
+
+    // Start the source
+    source.start();
+
+    // Wait for processing to complete
+    return new Promise((resolve) => {
+      this.workletNode!.port.onmessage = (event) => {
+        if (event.data.action === "processingComplete") {
+          resolve(event.data.url);
+        } else {
+          console.error("Unknown message received:", event.data);
+        }
+      };
+    });
   }
 
-  public static async sliceAllFilesIntoZip(
+  public async sliceAllFilesIntoZip(
     tracks: MutableRefObject<EditorTrack[]>,
     normalize: boolean,
     applyPostProcessing: boolean,
@@ -87,7 +174,10 @@ export class AudioService {
 
       if (!downloadUrl) continue;
 
-      const fileName = this.getNewFileName(track.file.name, exportFileType);
+      const fileName = AudioService.getNewFileName(
+        track.file.name,
+        exportFileType
+      );
 
       promises.push(
         fetch(downloadUrl)

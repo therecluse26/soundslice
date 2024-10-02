@@ -4,8 +4,7 @@ export class AudioLoader {
   static async loadAudioFile(file: File): Promise<AudioBuffer> {
     // Create a temporary AudioContext if it doesn't exist
     if (!this.tempContext) {
-      this.tempContext = new (window.AudioContext ||
-        (window as any).webkitAudioContext)();
+      this.tempContext = new AudioContext();
     }
 
     const arrayBuffer = await file.arrayBuffer();

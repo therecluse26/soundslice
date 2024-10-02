@@ -35,9 +35,10 @@ const MasterToolbar = () => {
   const handleExportFiles = async () => {
     setDownloading(true);
     setProcessingLoading(true);
+    const service = new AudioService();
 
     try {
-      const respUrl = await AudioService.sliceAllFilesIntoZip(
+      const respUrl = await service.sliceAllFilesIntoZip(
         tracks,
         normalizeAudio.current,
         applyPostProcessing.current,

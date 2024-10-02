@@ -10,7 +10,7 @@ enum OutputFormat {
   WAV = "wav",
 }
 
-self.onmessage = (event) => {
+self.onmessage = async (event) => {
   if (event.data.action === "createDownloadLink") {
     const { format, buffer, fileName } = event.data;
     try {
@@ -102,33 +102,6 @@ function bufferToWav(buffer: any): Blob {
 
   return new Blob([wavBuffer], { type: "audio/wav" });
 }
-
-// function bufferToMp3(buffer: any): Blob {
-//   const mp3Encoder = new lamejs.Mp3Encoder(
-//     buffer.numberOfChannels,
-//     buffer.sampleRate,
-//     320
-//   );
-
-//   const leftData = buffer.channelData[0];
-//   const rightData =
-//     buffer.numberOfChannels > 1 ? buffer.channelData[1] : leftData;
-
-//   const left = new Int16Array(leftData.length);
-//   const right = new Int16Array(rightData.length);
-
-//   for (let i = 0; i < leftData.length; i++) {
-//     left[i] = Math.max(-1, Math.min(1, leftData[i])) * 0x7fff;
-//     right[i] = Math.max(-1, Math.min(1, rightData[i])) * 0x7fff;
-//   }
-
-//   const mp3Data = mp3Encoder.encodeBuffer(left, right);
-//   const finalMp3Data = mp3Encoder.flush();
-
-//   return new Blob([new Uint8Array(mp3Data), new Uint8Array(finalMp3Data)], {
-//     type: "audio/mp3",
-//   });
-// }
 
 function bufferToMp3(buffer: any): Blob {
   const mp3Encoder = new lamejs.Mp3Encoder(
