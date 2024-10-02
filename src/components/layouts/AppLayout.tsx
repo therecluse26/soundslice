@@ -4,14 +4,18 @@ import { Footer } from "./Footer";
 
 export function Applayout() {
   return (
-    <>
+    <div className="flex flex-col h-screen">
+      {/* <div className="fixed top-0 left-0 right-0 z-10"> */}
       <Header />
-
-      <Outlet />
-
-      <div className="container px-4 md:px-8">
-        <Footer />
-      </div>
-    </>
+      {/* </div> */}
+      <main className="flex-grow overflow-auto mt-[header-height] mb-[footer-height]">
+        <div className="flex justify-center w-full h-full">
+          <Outlet />
+        </div>
+      </main>
+      {/* <div className="fixed bottom-0 left-0 right-0 z-10"> */}
+      <Footer />
+      {/* </div> */}
+    </div>
   );
 }

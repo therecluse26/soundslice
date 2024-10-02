@@ -26,19 +26,17 @@ export default function Dashboard() {
   return (
     <>
       {isLoading ? (
-        <div className="w-[100vw] h-100">
-          <div className="flex-row items-center">
-            <SineWaveLoader
-              width={window.innerWidth}
-              height={window.innerHeight - 200}
-              message="Slicing Audio. This may take a while..."
-              messageFont="bold 20px ui-sans-serif, system-ui, sans-serif"
-              color="#dc2626"
-              textColor="#fafafa"
-              lineThickness={5}
-            />
-          </div>
-        </div>
+        <SineWaveLoader
+          message="Slicing Audio. This may take a while..."
+          messageFont="ui-sans-serif, system-ui, sans-serif"
+          messageFontSize={32}
+          color="#dc2626"
+          textColor="#fafafa"
+          lineThickness={8}
+          sideFade={600}
+          amplitude={0.15}
+          frequency={0.015}
+        />
       ) : (
         <>
           <div className="flex-grow flex flex-col">
@@ -57,7 +55,7 @@ export default function Dashboard() {
                     ))}
                   </div>
                 )}
-              </div>{" "}
+              </div>
             </div>
           </div>
         </>
