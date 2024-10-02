@@ -200,7 +200,7 @@ async function applyEffect(
   }
 }
 
-export async function applyPostProcessing(
+export async function applyProcessingPipeline(
   inputBuffer: AudioBuffer,
   {
     normalize: audioNormalize,
@@ -243,5 +243,5 @@ export default {
   limit,
   normalize,
   applyEffect,
-  applyPostProcessing,
+  applyProcessingPipeline,
 };

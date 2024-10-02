@@ -3,7 +3,7 @@ import { AudioLoader } from "./audio-loader";
 import { AudioTrimmer } from "./audio-trimmer";
 import JSZip from "jszip";
 import { EditorTrack } from "@/stores/audio-store";
-import { applyPostProcessing } from "@/lib/audio-processors";
+import { applyProcessingPipeline } from "@/lib/audio-processors";
 
 export enum OutputFormat {
   MP3 = "mp3",
@@ -48,7 +48,7 @@ export class AudioService {
 
     if (normalize) {
       // TODO: Make these all configurable
-      trimmedBuffer = await applyPostProcessing(trimmedBuffer, {
+      trimmedBuffer = await applyProcessingPipeline(trimmedBuffer, {
         normalize: normalize,
         compress: normalize,
         trimSilence: normalize,
