@@ -20,6 +20,10 @@ const MasterToolbar = () => {
     tracks,
     normalizeAudio,
     setNormalizeAudio,
+    applyPostProcessing,
+    setApplyPostProcessing,
+    trimSilence,
+    setTrimSilence,
     exportFileType,
     setExportFileType,
   } = useAudioStore();
@@ -28,17 +32,14 @@ const MasterToolbar = () => {
 
   const isMobile = useMediaQuery("(max-width: 800px)");
 
-  const handleNormalizeChange = (normalize: string) => {
-    const checked = normalize === "true";
-    setNormalizeAudio(checked);
-  };
-
   const handleExportFiles = async () => {
     setDownloading(true);
 
     const respUrl = await AudioService.sliceAllFilesIntoZip(
       tracks,
       normalizeAudio.current,
+      applyPostProcessing.current,
+      trimSilence.current,
       exportFileType.current
     );
 
@@ -62,13 +63,15 @@ const MasterToolbar = () => {
               : "sm:flex-row sm:justify-center gap-8 sm:space-x-2 sm:space-y-0"
           }`}
         >
-          <div className="flex items-center space-x-2">
-            <Label>Normalize Levels?</Label>
+          <div className="flex flex-col w-full space-y-2">
+            <Label className="w-full">Normalize Levels?</Label>
             <Select
-              onValueChange={handleNormalizeChange}
+              onValueChange={(checked) => {
+                setNormalizeAudio(checked === "true");
+              }}
               defaultValue={normalizeAudio.current.toString()}
             >
-              <SelectTrigger className="w-[120px]">
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -77,13 +80,48 @@ const MasterToolbar = () => {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center space-x-2">
-            <Label>Output Format</Label>
+
+          <div className="flex flex-col w-full space-y-2">
+            <Label className="w-full">Apply Post Processing?</Label>
+            <Select
+              onValueChange={(checked) => {
+                setApplyPostProcessing(checked === "true");
+              }}
+              defaultValue={applyPostProcessing.current.toString()}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={"true"}>Yes</SelectItem>
+                <SelectItem value={"false"}>No</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col w-full space-y-2">
+            <Label className="w-full">Trim Silence?</Label>
+            <Select
+              onValueChange={(checked) => {
+                setTrimSilence(checked === "true");
+              }}
+              defaultValue={trimSilence.current.toString()}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={"true"}>Yes</SelectItem>
+                <SelectItem value={"false"}>No</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col w-full space-y-2">
+            <Label className="w-full">Output Format</Label>
             <Select
               onValueChange={setExportFileType}
               defaultValue={exportFileType.current}
             >
-              <SelectTrigger className="w-[120px]">
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -103,27 +141,25 @@ const MasterToolbar = () => {
             </Select>
           </div>
 
-          {downloading ? (
-            <Button
-              disabled
-              className="w-full sm:w-auto bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
-            >
-              <ReloadIcon className="animate-spin" />
-              <span className="ml-2">
-                {isMobile ? "Downloading..." : "Slice & Download All Files"}
-              </span>
-            </Button>
-          ) : (
-            <Button
-              onClick={handleExportFiles}
-              className="w-full sm:w-auto bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
-            >
-              <DownloadIcon />
-              <span className="ml-2">
-                {isMobile ? "Export All" : "Slice & Download All Files"}
-              </span>
-            </Button>
-          )}
+          <div className="flex w-full">
+            {downloading ? (
+              <Button
+                disabled
+                className="flex-grow h-full flex items-center justify-center w-full sm:w-auto bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
+              >
+                <ReloadIcon className="animate-spin mr-2" />
+                <span>{isMobile ? "Downloading..." : "Slice All Files"}</span>
+              </Button>
+            ) : (
+              <Button
+                onClick={handleExportFiles}
+                className="flex-grow h-full flex items-center justify-center w-full sm:w-auto bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary"
+              >
+                <DownloadIcon className="mr-2" />
+                <span>{isMobile ? "Export All" : "Slice All Files"}</span>
+              </Button>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>

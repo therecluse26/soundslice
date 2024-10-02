@@ -34,6 +34,8 @@ export class AudioService {
   public static async sliceAudio(
     track: EditorTrack,
     normalize: boolean,
+    applyPostProcessing: boolean,
+    trimSilence: boolean,
     exportFileType: OutputFormat
   ): Promise<string | null> {
     if (!track.selectedRegion) return null;
@@ -50,8 +52,8 @@ export class AudioService {
       // TODO: Make these all configurable
       trimmedBuffer = await applyProcessingPipeline(trimmedBuffer, {
         normalize: normalize,
-        compress: normalize,
-        trimSilence: normalize,
+        compress: applyPostProcessing,
+        trimSilence: trimSilence,
       });
     }
 
@@ -65,6 +67,8 @@ export class AudioService {
   public static async sliceAllFilesIntoZip(
     tracks: MutableRefObject<EditorTrack[]>,
     normalize: boolean,
+    applyPostProcessing: boolean,
+    trimSilence: boolean,
     exportFileType: OutputFormat
   ): Promise<string> {
     const zip = new JSZip();
@@ -76,6 +80,8 @@ export class AudioService {
       const downloadUrl = await this.sliceAudio(
         track,
         normalize,
+        applyPostProcessing,
+        trimSilence,
         exportFileType
       );
 

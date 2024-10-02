@@ -19,6 +19,12 @@ interface AudioState {
   normalizeAudio: MutableRefObject<boolean>;
   setNormalizeAudio: (normalize: boolean) => void;
 
+  applyPostProcessing: MutableRefObject<boolean>;
+  setApplyPostProcessing: (apply: boolean) => void;
+
+  trimSilence: MutableRefObject<boolean>;
+  setTrimSilence: (trim: boolean) => void;
+
   exportFileType: MutableRefObject<OutputFormat>;
   setExportFileType: (fileType: OutputFormat) => void;
 
@@ -53,6 +59,18 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   setNormalizeAudio: (normalize: boolean) => {
     get().normalizeAudio.current = normalize;
+  },
+
+  applyPostProcessing: { current: false },
+
+  setApplyPostProcessing: (apply: boolean) => {
+    get().applyPostProcessing.current = apply;
+  },
+
+  trimSilence: { current: false },
+
+  setTrimSilence: (trim: boolean) => {
+    get().trimSilence.current = trim;
   },
 
   exportFileType: { current: OutputFormat.WAV },

@@ -94,7 +94,7 @@ export async function compress(
  */
 export async function limit(
   buffer: AudioBuffer,
-  threshold: number = -2
+  threshold: number = -0.95
 ): Promise<AudioBuffer> {
   const audioContext = new OfflineAudioContext(
     buffer.numberOfChannels,
@@ -182,6 +182,15 @@ function getMaxAmplitude(buffer: AudioBuffer): number {
   return maxAmplitude;
 }
 
+/**
+ * Applies a specified effect to an AudioBuffer.
+ * This function is a wrapper around the specific effect functions.
+ *
+ * @param buffer - The input AudioBuffer to which the effect will be applied.
+ * @param effectName - The name of the effect to apply.
+ * @returns A Promise that resolves to the AudioBuffer with the effect applied.
+ * @throws An error if the effect name is not recognized.
+ */
 async function applyEffect(
   buffer: AudioBuffer,
   effectName: string
@@ -200,6 +209,17 @@ async function applyEffect(
   }
 }
 
+/**
+ * Applies a processing pipeline to an AudioBuffer.
+ * This function applies a series of effects to the input buffer in sequence.
+ * The effects are applied in the order specified by the pipeline array.
+ * Each effect is enabled or disabled based on the corresponding property in the props object.
+ * The props object should have the following properties:
+ * - normalize: boolean - Whether to normalize the audio levels.
+ * - compress: boolean - Whether to apply dynamic range compression.
+ * - trimSilence: boolean - Whether to trim silence from the audio.
+ * The default props object is { normalize: false, compress: false, trimSilence: false }.
+ */
 export async function applyProcessingPipeline(
   inputBuffer: AudioBuffer,
   {
