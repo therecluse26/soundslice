@@ -159,7 +159,9 @@ export default function BrowserMultiFileUpload({
           throw new Error("No files detected in the drop event.");
         }
 
-        const droppedFiles = Array.from(dt.files);
+        const droppedFiles = Array.from(dt.files).filter((file) =>
+          file.type.includes("audio")
+        );
 
         if (droppedFiles.length > 0) {
           if (droppedFiles[0].size === 0) {
@@ -169,7 +171,8 @@ export default function BrowserMultiFileUpload({
           }
           handleFiles(droppedFiles);
         } else {
-          throw new Error("No files were dropped.");
+          setDragDropError("No valid audio files were dropped.");
+          return;
         }
       } catch (error) {
         console.error("Error in drag and drop:", error);
@@ -211,6 +214,7 @@ export default function BrowserMultiFileUpload({
         </div>
         <input
           type="file"
+          accept="audio/*"
           ref={fileInputRef}
           className="hidden"
           onChange={handleFileChange}
