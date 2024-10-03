@@ -16,5 +16,22 @@ export default defineConfig(({ command }) => {
         basename: "",
       },
     },
+    build: {
+      minify: "terser",
+      terserOptions: {
+        compress: {
+          drop_console: true,
+          drop_debugger: true,
+        },
+      },
+      rollupOptions: {
+        output: {
+          manualChunks: undefined,
+        },
+      },
+    },
+    optimizeDeps: {
+      include: ["react", "react-dom"],
+    },
   };
 });

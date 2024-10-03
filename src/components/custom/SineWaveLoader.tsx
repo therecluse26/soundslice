@@ -1,4 +1,11 @@
-import React, { useRef, useEffect, useCallback, useState } from "react";
+import React, {
+  useRef,
+  useEffect,
+  useCallback,
+  useState,
+  useMemo,
+} from "react";
+import debounce from "lodash/debounce";
 
 interface SineWaveLoaderProps {
   color?: string;
@@ -19,7 +26,7 @@ interface SineWaveLoaderProps {
 
 const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
   color = "#3498db",
-  amplitude = 0.1, // Now a percentage of height
+  amplitude = 0.1,
   frequency = 0.02,
   message = "Loading...",
   messageFont = "ui-sans-serif, system-ui, sans-serif",
@@ -35,8 +42,9 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animationRef = useRef(0);
-  const lastFrameTime = useRef(0);
+  const animationRef = useRef<number>(0);
+  const lastFrameTime = useRef<number>(0);
+
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
     height: window.innerHeight,
@@ -45,31 +53,52 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
   const adjustedSideFade = Math.min(sideFade, dimensions.width / 4);
 
   const updateDimensions = useCallback(() => {
-    const minWidth = 400; // Adjust this value as needed
-    const minHeight = 300; // Adjust this value as needed
-    setDimensions({
+    const minWidth = 400;
+    const minHeight = 300;
+    setDimensions((prevDimensions) => ({
       width: Math.max(window.innerWidth, minWidth),
       height: Math.max(window.innerHeight, minHeight),
-    });
+    }));
   }, []);
 
+  const debouncedUpdateDimensions = useMemo(
+    () => debounce(updateDimensions, 250),
+    [updateDimensions]
+  );
+
   useEffect(() => {
-    window.addEventListener("resize", updateDimensions);
-    return () => window.removeEventListener("resize", updateDimensions);
-  }, [updateDimensions]);
+    window.addEventListener("resize", debouncedUpdateDimensions);
+    return () =>
+      window.removeEventListener("resize", debouncedUpdateDimensions);
+  }, [debouncedUpdateDimensions]);
+
+  const sineWavePoints = useMemo(() => {
+    const points: number[] = [];
+    for (let x = 0; x < dimensions.width; x++) {
+      points.push(
+        dimensions.height / 2 +
+          dimensions.height * amplitude * Math.sin(x * frequency)
+      );
+    }
+    return points;
+  }, [dimensions.width, dimensions.height, amplitude, frequency]);
 
   const drawSineWave = useCallback(
     (ctx: CanvasRenderingContext2D, offset: number) => {
       const { width, height } = dimensions;
       ctx.beginPath();
-      for (let x = 0; x < width; x++) {
-        const y =
-          height / 2 + height * amplitude * Math.sin((x + offset) * frequency);
-        ctx.lineTo(x, y);
-      }
       ctx.strokeStyle = color;
       ctx.lineWidth = lineThickness;
+
+      for (let x = 0; x < width; x++) {
+        const y =
+          sineWavePoints[x] +
+          amplitude * Math.sin((x + offset) * frequency) * height;
+        ctx.lineTo(x, y);
+      }
+
       ctx.stroke();
+
       if (sideFade > 0) {
         const gradient = ctx.createLinearGradient(0, 0, width, 0);
         gradient.addColorStop(0, "rgba(255, 255, 255, 1)");
@@ -88,16 +117,25 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
         ctx.globalCompositeOperation = "source-over";
       }
     },
-    [dimensions, amplitude, frequency, color, lineThickness, sideFade]
+    [
+      dimensions,
+      amplitude,
+      frequency,
+      color,
+      lineThickness,
+      sideFade,
+      sineWavePoints,
+    ]
   );
 
   const drawMessageBox = useCallback(
     (ctx: CanvasRenderingContext2D) => {
       const { width, height } = dimensions;
       const boxWidth = Math.min(300, width * 0.8);
-      const boxHeight = Math.min(40, height * 0.2); // Adjusted to be responsive
+      const boxHeight = Math.min(40, height * 0.2);
       const boxX = (width - boxWidth) / 2;
       const boxY = (height - boxHeight) / 2;
+
       if (featherAmount > 0) {
         const gradient = ctx.createRadialGradient(
           width / 2,
@@ -160,11 +198,13 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
     ) => {
       const words = text.split(" ");
       let line = "";
-      const lines = [];
+      const lines: string[] = [];
+
       for (let n = 0; n < words.length; n++) {
         const testLine = line + words[n] + " ";
         const metrics = ctx.measureText(testLine);
         const testWidth = metrics.width;
+
         if (testWidth > maxWidth && n > 0) {
           lines.push(line);
           line = words[n] + " ";
@@ -173,6 +213,7 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
         }
       }
       lines.push(line);
+
       for (let i = 0; i < lines.length; i++) {
         ctx.fillText(lines[i], x, y + i * lineHeight);
       }
@@ -188,22 +229,17 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
       baseFontSize: number,
       maxWidth: number,
       maxHeight: number,
-      minFontSize: number // New parameter for configurable minimum font size
+      minFontSize: number
     ) => {
-      // Calculate initial font size based on the component's width
-      let fontSize = baseFontSize * (dimensions.width / 1920);
-
-      // Ensure the font size is not larger than the base size
-      fontSize = Math.min(fontSize, baseFontSize);
-
-      // Use the provided minFontSize instead of a hard-coded value
+      let fontSize = Math.min(
+        baseFontSize * (dimensions.width / 1920),
+        baseFontSize
+      );
       fontSize = Math.max(fontSize, minFontSize);
-
       ctx.font = `${fontSize}px ${messageFont}`;
       let textWidth = ctx.measureText(message).width;
       let textHeight = fontSize;
 
-      // Reduce font size if text is too large, but not below minFontSize
       while (
         (textWidth > maxWidth || textHeight > maxHeight) &&
         fontSize > minFontSize
@@ -239,31 +275,42 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
       const ctx = canvasRef.current.getContext("2d");
       const offscreenCtx = offscreenCanvasRef.current.getContext("2d");
       if (!ctx || !offscreenCtx) return;
+
       const { width, height } = dimensions;
       const elapsed = timestamp - lastFrameTime.current;
-      if (elapsed < 16) {
+      const targetFPS = 60;
+      const frameInterval = 1000 / targetFPS;
+
+      if (elapsed < frameInterval) {
         animationRef.current = requestAnimationFrame(animate);
         return;
       }
+
       lastFrameTime.current = timestamp;
+
       ctx.clearRect(0, 0, width, height);
       offscreenCtx.clearRect(0, 0, width, height);
+
       try {
         drawSineWave(ctx, timestamp / 5);
+
         if (withBox) {
           drawMessageBox(offscreenCtx);
         }
+
         if (blurAmount > 0) {
           ctx.filter = `blur(${blurAmount}px)`;
         }
+
         ctx.drawImage(offscreenCanvasRef.current, 0, 0);
         ctx.filter = "none";
         ctx.fillStyle = textColor;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        const maxWidth = Math.min(1200, width * 0.8);
 
+        const maxWidth = Math.min(1200, width * 0.8);
         const maxHeight = height * 0.8;
+
         drawMessageWithFontResize(
           ctx,
           message,
@@ -276,6 +323,7 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
       } catch (error) {
         console.error("Error in animation:", error);
       }
+
       animationRef.current = requestAnimationFrame(animate);
     },
     [
@@ -300,6 +348,7 @@ const SineWaveLoader: React.FC<SineWaveLoaderProps> = ({
     offscreenCanvasRef.current.width = dimensions.width;
     offscreenCanvasRef.current.height = dimensions.height;
     animationRef.current = requestAnimationFrame(animate);
+
     return () => {
       cancelAnimationFrame(animationRef.current);
     };

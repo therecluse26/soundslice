@@ -34,7 +34,7 @@ export default function Dashboard() {
           textColor="#fafafa"
           lineThickness={8}
           sideFade={600}
-          amplitude={0.15}
+          amplitude={0.1}
           frequency={0.015}
         />
       ) : (

@@ -31,6 +31,16 @@ export class AudioService {
 
   public createDownloadLink = AudioTrimmer.createDownloadLink;
 
+  public static async sliceAudioViaWorklet(
+    track: EditorTrack,
+    normalize: boolean,
+    applyPostProcessing: boolean,
+    trimSilence: boolean,
+    exportFileType: OutputFormat
+  ): Promise<string | null> {
+    return null;
+  }
+
   public static async sliceAudio(
     track: EditorTrack,
     normalize: boolean,
