@@ -204,7 +204,7 @@ export default function BrowserMultiFileUpload({
         >
           <UploadIcon className="mx-auto h-12 w-12" />
           <p className="mt-2 text-sm">
-            Drag and drop files here, or click to select files
+            Drag and drop audio files here, or click to select files
           </p>
           {dragDropError && (
             <div style={{ color: "red", marginTop: "10px" }}>

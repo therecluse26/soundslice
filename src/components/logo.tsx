@@ -5,7 +5,9 @@ export function Logo() {
   return (
     <>
       {/* <Icons.logo className="h-6 w-6" /> */}
-      <span className="font-bold text-xl">{appConfig.name}</span>
+      <svg width="100%" height="35">
+        <image href="soundslice-logo-white.svg" width="100%" height="35" />
+      </svg>
     </>
   );
 }
