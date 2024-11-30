@@ -1,8 +1,13 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -12,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { useAudioStore } from "@/stores/audio-store";
 import { OutputFormat, AudioService } from "@/lib/audio-service";
-import { DownloadIcon, ReloadIcon } from "@radix-ui/react-icons";
+import { DownloadIcon, QuestionMarkCircledIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { useMediaQuery } from "@/lib/use-media-query";
 
 const MasterToolbar = () => {
@@ -61,14 +66,22 @@ const MasterToolbar = () => {
     <Card>
       <CardContent className="mt-6">
         <div
-          className={`flex flex-col space-y-4 ${
-            isMobile
-              ? "flex-col justify-center items-center w-full"
-              : "sm:flex-row sm:justify-center gap-8 sm:space-x-2 sm:space-y-0"
-          }`}
+          className={`flex flex-col space-y-4 ${isMobile
+            ? "flex-col justify-center items-center w-full"
+            : "sm:flex-row sm:justify-center gap-8 sm:space-x-2 sm:space-y-0"
+            }`}
         >
           <div className="flex flex-col w-full space-y-2">
-            <Label className="w-full">Normalize Levels?</Label>
+            <Label className="w-full flex gap-2">Normalize Levels? 
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger><QuestionMarkCircledIcon /></TooltipTrigger>
+                <TooltipContent className="bg-background border-2 border-white text-white w-80 border-dotted">
+                  <p>Maximize the volume of all tracks - this will make the levels more consistent</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            </Label>
             <Select
               onValueChange={(checked) => {
                 setNormalizeAudio(checked === "true");
@@ -86,7 +99,16 @@ const MasterToolbar = () => {
           </div>
 
           <div className="flex flex-col w-full space-y-2">
-            <Label className="w-full">Apply Post Processing?</Label>
+            <Label className="w-full flex gap-2">Apply Post Processing?
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger><QuestionMarkCircledIcon /></TooltipTrigger>
+                <TooltipContent className="bg-background border-2 border-white text-white w-80 border-dotted">
+                  <p>Apply audio compression to all tracks to even out the loud and quiet parts - this will make the audio sound less dynamic, but more consistent</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            </Label>
             <Select
               onValueChange={(checked) => {
                 setApplyPostProcessing(checked === "true");
