@@ -9,6 +9,7 @@ import { useWavesurfer } from "@wavesurfer/react";
 import HoverPlugin from "wavesurfer.js/dist/plugins/hover";
 import RegionsPlugin, { Region } from "wavesurfer.js/dist/plugins/regions";
 import TimelinePlugin from "wavesurfer.js/dist/plugins/timeline";
+import ZoomPlugin from 'wavesurfer.js/dist/plugins/zoom';
 import resolveConfig from "tailwindcss/resolveConfig";
 import tailwindConfig from "../../../tailwind.config";
 import { Card, CardContent } from "../ui/card";
@@ -23,7 +24,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import { AudioService } from "@/lib/audio-service";
 import { useMediaQuery } from "@/lib/use-media-query";
-import { useShallow } from "zustand/react/shallow";
+import { Slider } from "../ui/slider";
 
 // Interfaces
 interface EditorProps {
@@ -56,9 +57,10 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
   const isMobile = useMediaQuery("(max-width: 800px)");
 
   // Refs
-  const audioContainer = useRef(null);
+  const audioContainer = useRef<HTMLDivElement | null>(null);
   const isPlaying = useRef(false);
   const currentTimeRef = useRef(0);
+  const inFocus = useRef(false);
 
   // State
   const [selectionDuration, setSelectionDuration] = useState(0);
@@ -78,10 +80,14 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
       }),
     []
   );
+  const zoomPlugin = useMemo(() => ZoomPlugin.create({
+    exponentialZooming: true,
+    deltaThreshold: 1000000,
+  }), [])
   const timelinePlugin = useMemo(() => TimelinePlugin.create(), []);
   const plugins = useMemo(
-    () => [regionsPlugin, hoverPlugin, timelinePlugin],
-    [regionsPlugin, hoverPlugin, timelinePlugin]
+    () => [regionsPlugin, hoverPlugin, timelinePlugin, zoomPlugin],
+    [regionsPlugin, hoverPlugin, timelinePlugin, zoomPlugin]
   );
   const url = useMemo(() => URL.createObjectURL(track.file), [track]);
   const audioService = useMemo(() => new AudioService(), []);
@@ -98,6 +104,8 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     sampleRate: 44100,
     url,
     plugins,
+    autoScroll: true,
+    minPxPerSec: 100,
   });
 
   // Callbacks
@@ -181,6 +189,8 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
         minLength: 5,
       });
 
+      handleZoom([0])
+
       // Necessary to set region to trim if region is not changed
       onUpdatedRegion(newRegion);
 
@@ -196,6 +206,49 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     };
   }, [wavesurfer, regionsPlugin, onUpdatedRegion]);
 
+  // Add zoom handler
+  const handleZoom = useCallback(
+    (value: number[]) => {
+      if (!wavesurfer) return;
+      wavesurfer.zoom(value[0]);
+    },
+    [wavesurfer]
+  );
+
+  // Add keyboard handler
+  useEffect(() => {
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if(!inFocus.current) return;
+
+      // Prevent spacebar from triggering if user is typing in an input field
+      if (event.target instanceof HTMLInputElement || 
+          event.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      
+      if (event.code === 'Space') {
+        event.preventDefault();
+        onPlayPause();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyPress);
+    return () => {
+      document.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [onPlayPause]);
+
+  useEffect(() => {
+    const container = audioContainer.current;
+    if (!container) return;
+    container.addEventListener('mouseover', () => {
+      inFocus.current = true;
+    });
+    container.addEventListener('mouseout', () => {
+      inFocus.current = false;
+    });
+  }, []);
+
   // Render
   return (
     <Card>
@@ -206,7 +259,12 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
           </div>
         )}
 
-        <div ref={audioContainer} className="cursor-text" />
+        <div className="w-full scrollbar-thin scrollbar-track-background scrollbar-thumb-primary hover:scrollbar-thumb-primary">
+          <div 
+            ref={audioContainer} 
+            className="cursor-text min-w-full"
+          />
+        </div>
 
         {ready && (
           <div
@@ -226,10 +284,22 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
               <div className={isMobile ? "text-sm" : ""}>
                 Selection duration: <code>{formatTime(selectionDuration)}</code>
               </div>
+             
             </div>
+            <div className="flex gap-2 items-center w-[300px]">
+                Zoom:
+                <Slider
+                  defaultValue={[0]}
+                  min={0}
+                  max={200}
+                  step={0.1}
+                  onValueChange={handleZoom}
+                />
+              </div>
             <div
               className={`${isMobile ? "flex justify-between" : "flex gap-4"}`}
             >
+              
               <Button
                 onClick={onPlayPause}
                 className={`bg-primary-foreground text-primary hover:bg-primary hover:text-primary-foreground px-4 py-2 ${

@@ -5,8 +5,6 @@ import { useCallback, useEffect, useState } from "react";
 import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import MasterToolbar from "@/components/custom/MasterToolbar";
 import SineWaveLoader from "@/components/custom/SineWaveLoader";
-import { Header } from "@/components/layouts/Header";
-import { Footer } from "@/components/layouts/Footer";
 
 export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(false);
