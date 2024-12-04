@@ -106,7 +106,36 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     plugins,
     autoScroll: true,
     minPxPerSec: 100,
+    fillParent: true,
   });
+
+  // Add smooth resize handling
+  useEffect(() => {
+    if (!wavesurfer || !audioContainer.current) return;
+
+    let rafId: number;
+    let lastWidth = audioContainer.current.clientWidth;
+
+    const handleResize = () => {
+      if (!audioContainer.current) return;
+      
+      const currentWidth = audioContainer.current.clientWidth;
+      if (currentWidth !== lastWidth) {
+        lastWidth = currentWidth;
+        wavesurfer.setOptions({
+          container: audioContainer.current,
+          width: currentWidth,
+        });
+      }
+      rafId = requestAnimationFrame(handleResize);
+    };
+
+    rafId = requestAnimationFrame(handleResize);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+    };
+  }, [wavesurfer]);
 
   // Callbacks
   const onPlayPause = useCallback(() => {
