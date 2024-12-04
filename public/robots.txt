@@ -1,6 +1,13 @@
+# Allow all user agents to access all content
 User-agent: Googlebot
 Allow: /
 
 User-agent: *
 Allow: /
+
+# Explicitly allow access to the Google Ads script
+User-agent: Googlebot
+Allow: /pagead/
+
+# Sitemap location
 Sitemap: https://soundslice.app/sitemap.xml
