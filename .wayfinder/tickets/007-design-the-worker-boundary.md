@@ -22,8 +22,28 @@ the message. Decoding, trimming, and all effects run on the main thread.
 Decide:
 
 1. **The split.** Which stages move into the worker? Decode, replay of the edit
-   stack, effects, encode. Note that `OfflineAudioContext` is available in
-   workers, but `decodeAudioData` availability differs. Check before deciding.
+   stack, effects, encode.
+
+   **Correction, 2026-08-18.** This ticket used to say `OfflineAudioContext` is
+   available in workers. It is not. The whole Web Audio API is `[Exposed=Window]`.
+   Measured in Chromium 146 inside a dedicated worker:
+
+   | Global | In a worker |
+   |---|---|
+   | `OfflineAudioContext` | `undefined` |
+   | `AudioContext` | `undefined` |
+   | `AudioBuffer` | `undefined` |
+   | `AudioEncoder` | `function` |
+   | `AudioData` | `function` |
+
+   So **no Web Audio node graph can run off the main thread.** Any stage moved
+   into a worker must be rewritten as plain arithmetic over `Float32Array`.
+   Encoding can stay in a worker, because WebCodecs is exposed there.
+
+   This changes the shape of the answer. The question is no longer "which stages
+   move", it is "which stages can be expressed without Web Audio at all". See
+   the [WebCodecs research](../research/webcodecs-audioencoder.md) on the
+   `research/webcodecs-audioencoder` branch.
 2. **Transfer cost.** Channel data is currently copied, not transferred. A
    45-minute stereo track at 48 kHz is roughly 1 GB as `Float32Array`. Decide
    between transferable `ArrayBuffer`, `SharedArrayBuffer`, or chunking. Note

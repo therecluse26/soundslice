@@ -93,6 +93,18 @@ chips that can be reordered, with draggable crossfades between them.
   every file decodes at the machine's sample rate, not its own; and
   `performance.memory` does not count audio, so ticket 007 cannot take its
   memory ceiling from heap figures.
+- [004 — Research: WebCodecs AudioEncoder](./tickets/004-research-webcodecs-audioencoder.md)
+  — no browser can encode MP3 through WebCodecs and none ever will, so
+  `shine.js` stays on every browser forever. Safe to add: 24-bit WAV
+  (hand-written, cheapest win), Opus in WebM, and a sample rate choice. FLAC
+  needs WASM everywhere. Do not offer Ogg `.opus`, AAC or Vorbis. Verified
+  separately: the whole Web Audio API is `[Exposed=Window]`, so no node graph
+  runs in a worker — ticket 007 has been corrected.
+- [005 — Research: LUFS loudness per ITU-R BS.1770](./tickets/005-research-lufs-bs1770.md)
+  — implement directly, about 150 lines, no runtime dependency. 44.1 kHz
+  K-weighting coefficients re-derived and checked against libebur128. EBU Tech
+  3341 vectors verified by running a reference implementation, at both 48 and
+  44.1 kHz. Keep peak normalization as its own operation beside loudness.
 
 ## Not yet specified
 
