@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SoundSlice engine benchmark</title>
+    <style>
+      body {
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #0a0a0a;
+        color: #fafafa;
+        margin: 0;
+        padding: 24px;
+      }
+      h1 { font-size: 16px; margin: 0 0 4px; }
+      p.sub { color: #a3a3a3; margin: 0 0 20px; }
+      button {
+        background: #dc2626; color: #fafafa; border: 0;
+        padding: 8px 16px; border-radius: 4px; cursor: pointer;
+        font: inherit; margin-right: 8px;
+      }
+      button:disabled { opacity: 0.4; cursor: default; }
+      #log {
+        white-space: pre-wrap; margin-top: 20px;
+        border-top: 1px solid #262626; padding-top: 16px;
+      }
+      .warn { color: #fbbf24; }
+      .err { color: #f87171; }
+      .ok { color: #4ade80; }
+    </style>
+  </head>
+  <body>
+    <h1>SoundSlice engine benchmark</h1>
+    <p class="sub">
+      Ticket 001 — Measure performance baselines. Dev only; this page is not part
+      of the production build.
+    </p>
+    <button id="run">Run full benchmark</button>
+    <button id="quick">Run 30-second files only</button>
+    <div id="log">Idle.</div>
+    <script type="module" src="/src/bench/main.ts"></script>
+  </body>
+</html>

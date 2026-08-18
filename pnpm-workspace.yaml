@@ -1,0 +1,5 @@
+# esbuild ships its Linux binary as a separate package, so its postinstall
+# script is not needed here. Vite 3 builds and serves without it. Set to false
+# so `pnpm install` finishes clean instead of warning about an ignored build.
+allowBuilds:
+  esbuild: false

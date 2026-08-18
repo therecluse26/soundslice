@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Benchmark audio for ticket 001. Large and re-fetchable via
+# scripts/fetch-bench-audio.sh
+bench-audio/

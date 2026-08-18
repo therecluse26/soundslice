@@ -85,7 +85,14 @@ chips that can be reordered, with draggable crossfades between them.
 
 <!-- one line per closed ticket -->
 
-_None yet. The map was charted on 2026-08-18._
+- [001 — Measure performance baselines](./tickets/001-measure-performance-baselines.md)
+  — the engine's speed today is recorded in [`baselines.md`](./baselines.md);
+  ticket 008 must match or beat every median. Ten findings, four of which move
+  other tickets: a 45-minute track kills the tab under repeated work; the
+  post-processing switch does nothing unless normalize is on (new ticket 013);
+  every file decodes at the machine's sample rate, not its own; and
+  `performance.memory` does not count audio, so ticket 007 cannot take its
+  memory ceiling from heap figures.
 
 ## Not yet specified
 
@@ -94,7 +101,13 @@ _None yet. The map was charted on 2026-08-18._
 - The join strip — region order model, crossfade maths, single-file export path
 - Saved projects — OPFS schema, what is stored, when it is evicted
 - "Copy settings to all tracks" — which settings copy, which do not
-- Live preview graph and the "Fade edges" switch in Simple view
+- Live preview graph, and the "Fade edges" switch in Simple view. Baselines
+  finding 9: a 20 ms fade is already applied to every slice and cannot be turned
+  off (`src/lib/audio-trimmer.ts:28`). The switch exposes behaviour that exists.
+- The output sample rate contract. Baselines finding 3: every file decodes at the
+  machine's audio rate, not its own, so the same file on two machines can produce
+  different output. Standing rule 1 requires byte-identical output for the same
+  settings. Touches tickets 002, 008 and 011; not yet sharp enough to sit in one.
 - How Advanced view hides below 800 px without breaking layout
 - Whether `CONTEXT.md` needs an ADR for the edit stack rewrite
 

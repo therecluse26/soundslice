@@ -4,7 +4,7 @@
 **Status:** open
 **Assignee:** _unclaimed_
 **Blocked by:** none
-**Blocks:** [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md)
+**Blocks:** [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md), [013 — Post-processing switch does nothing unless normalize is on](./013-post-processing-guard-defect.md)
 **Map:** [Simple view and Advanced view](../map.md)
 
 ## Question
