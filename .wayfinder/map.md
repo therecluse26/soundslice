@@ -106,6 +106,14 @@ chips that can be reordered, with draggable crossfades between them.
   K-weighting coefficients re-derived and checked against libebur128. EBU Tech
   3341 vectors verified by running a reference implementation, at both 48 and
   44.1 kHz. Keep peak normalization as its own operation beside loudness.
+- [003 — Design the view state model](./tickets/003-design-the-view-state-model.md)
+  — the design is [`designs/view-state.md`](./designs/view-state.md). View lives
+  in the Zustand store, persisted under `soundslice:view`; master defaults
+  persist too, per-track settings do not. Simple's switches are presets over
+  Advanced operations, never a second code path. A track stores a partial of the
+  master settings, never a copy. The stored view is never rewritten by screen
+  size. **Simple view exports only the region it draws** — this reverses the
+  ticket's own pre-agreed answer, and ticket 012 is corrected to match.
 
 ## Not yet specified
 
@@ -113,7 +121,11 @@ chips that can be reordered, with draggable crossfades between them.
 - Decide-then-build chains for each of the fourteen features
 - The join strip — region order model, crossfade maths, single-file export path
 - Saved projects — OPFS schema, what is stored, when it is evicted
-- "Copy settings to all tracks" — which settings copy, which do not
+- "Copy settings to all tracks" — which settings copy, which do not. Half
+  answered by ticket 003: copying writes the current effective settings into
+  every track's partial, turning inherited values into overrides, reversible with
+  Reset all. What remains is *which* settings copy, and that waits on the
+  operation set from ticket 002.
 - Live preview graph, and the "Fade edges" switch in Simple view. Baselines
   finding 9: a 20 ms fade is already applied to every slice and cannot be turned
   off (`src/lib/audio-trimmer.ts:28`). The switch exposes behaviour that exists.
@@ -121,8 +133,11 @@ chips that can be reordered, with draggable crossfades between them.
   machine's audio rate, not its own, so the same file on two machines can produce
   different output. Standing rule 1 requires byte-identical output for the same
   settings. Touches tickets 002, 008 and 011; not yet sharp enough to sit in one.
-- How Advanced view hides below 800 px without breaking layout
 - Whether `CONTEXT.md` needs an ADR for the edit stack rewrite
+- New vocabulary for `CONTEXT.md`. Ticket 003 introduced terms the project now
+  uses and has not defined: *effective view*, *override* versus *inherited*, and
+  the Simple-view *chip*. They should land in the Language section, but the full
+  set is not settled until ticket 002 names the operations.
 
 ## Out of scope
 

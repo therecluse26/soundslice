@@ -26,3 +26,6 @@ dist-ssr
 # Benchmark audio for ticket 001. Large and re-fetchable via
 # scripts/fetch-bench-audio.sh
 bench-audio/
+
+# Playwright MCP browser artifacts (console logs, downloads)
+.playwright-mcp/
