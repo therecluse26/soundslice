@@ -97,7 +97,8 @@ chips that can be reordered, with draggable crossfades between them.
   — no browser can encode MP3 through WebCodecs and none ever will, so
   `shine.js` stays on every browser forever. Safe to add: 24-bit WAV
   (hand-written, cheapest win), Opus in WebM, and a sample rate choice. FLAC
-  needs WASM everywhere. Do not offer Ogg `.opus`, AAC or Vorbis. Verified
+  needs WASM everywhere. Do not offer Ogg `.opus`, AAC or Vorbis. Firefox does
+  ship `AudioEncoder` (130, desktop); Safari was the laggard at 26.0. Verified
   separately: the whole Web Audio API is `[Exposed=Window]`, so no node graph
   runs in a worker — ticket 007 has been corrected.
 - [005 — Research: LUFS loudness per ITU-R BS.1770](./tickets/005-research-lufs-bs1770.md)

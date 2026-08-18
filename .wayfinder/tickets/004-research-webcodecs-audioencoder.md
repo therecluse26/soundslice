@@ -96,3 +96,31 @@ rewritten as plain arithmetic over `Float32Array`.
   There are three distinct failure modes.
 - Capture `metadata.decoderConfig` from the first output chunk. Chrome emits it
   once and never again, and its sample rate may differ from the one requested.
+
+### Corrections to this ticket's own premise
+
+This ticket said Firefox is believed to lack audio encoding. **Firefox ships
+`AudioEncoder` from version 130, desktop only.** Safari was the laggard, arriving
+at 26.0. Chrome and Edge have had it since 94.
+
+Opus is the only codec encodable on all three engines. Confirmed in engine
+source, not documentation: Chromium's `audio_encoder.cc` handles only Opus and
+AAC; Firefox's `IsAudioEncodeSupported()` returns Opus or Vorbis; WebKit's Cocoa
+backend returns the literal strings "FLAC encoding is not supported" and
+"MP3 encoding is not supported".
+
+### Two traps ticket 011 must not fall into
+
+1. **24-bit WAV must use `WAVE_FORMAT_EXTENSIBLE`, not format tag 1.** Windows
+   Media Player rejects tag-1 24-bit files. Ticket 011's acceptance requires
+   every offered format to open in at least two other players, so the wrong tag
+   fails that bar directly.
+2. **`OfflineAudioContext` resampling aliases on downsample.** Chrome and Safari
+   resample an `AudioBufferSourceNode` by linear interpolation. Decode into a
+   context already at the target rate instead of rendering through one.
+
+Also: Chrome silently resamples Opus to 48 kHz, so the muxer must read the real
+rate from the first chunk's `decoderConfig` rather than the requested config.
+
+**Open item.** mediabunny's Web Worker support is strongly implied but never
+stated verbatim. Smoke-test it before committing to that architecture.
