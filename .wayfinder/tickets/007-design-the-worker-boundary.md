@@ -57,6 +57,11 @@ Decide:
    render abandoned without leaking a worker?
 6. **Memory ceiling.** How many decoded tracks are held at once. Ten 45-minute
    tracks will not fit. Decide the eviction rule, or the chunking rule.
+
+   Note that a loaded track also costs its **encoded** file, not only its decoded
+   buffer: `AudioEditor` creates a blob URL and never revokes it. See
+   [015 — Track audio is never released](./015-release-track-audio.md). The
+   ceiling has to count both.
 7. **AudioWorklet.** Whether live preview needs an `AudioWorklet` for anything,
    or whether built-in nodes cover it. Note the empty stub at
    `src/lib/audio-service.ts:34`, `sliceAudioViaWorklet`, which returns `null`.

@@ -152,14 +152,15 @@ async function fetchAsFile(name: string): Promise<File> {
  * The measured region is the whole track. That is the worst case, and it is
  * deterministic, so two runs of this harness compare directly.
  *
- * AudioService.sliceAudio only reads .start and .end off selectedRegion, so a
- * plain object is enough. It never needs a real wavesurfer Region — itself a
- * finding for ticket 009, which wants the plugin object out of the store.
+ * AudioService.sliceAudio only reads .start and .end off the region, so a plain
+ * object is enough. It never needed a real wavesurfer Region — a finding this
+ * harness recorded for ticket 009, which has since taken the plugin object out
+ * of the store. The field is now `region`, and its type is those two numbers.
  */
 function trackFor(file: File, durationSec: number): EditorTrack {
   return {
     file,
-    selectedRegion: { start: 0, end: durationSec } as any,
+    region: { start: 0, end: durationSec },
   };
 }
 
@@ -315,14 +316,14 @@ async function measureBatch(): Promise<Measurement> {
   const probe = await AudioLoader.loadAudioFile(file);
   const duration = probe.duration;
 
-  const tracks = {
-    current: Array.from({ length: BATCH_TRACKS }, (_, i) =>
-      trackFor(
-        new File([file], `clip-30s-${i}.wav`, { type: "audio/wav" }),
-        duration
-      )
-    ),
-  };
+  // A plain array. `sliceAllFilesIntoZip` used to take a `MutableRefObject`,
+  // because the store held its tracks in one. Ticket 009 made that real state.
+  const tracks = Array.from({ length: BATCH_TRACKS }, (_, i) =>
+    trackFor(
+      new File([file], `clip-30s-${i}.wav`, { type: "audio/wav" }),
+      duration
+    )
+  );
 
   return measure("batch zip", async () => {
     const url = await AudioService.sliceAllFilesIntoZip(

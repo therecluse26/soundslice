@@ -1,26 +1,38 @@
 import BrowserMultiFileUpload from "@/components/custom/BrowserMultiFileUpload";
 import { AudioEditor } from "@/components/custom/AudioEditor";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import MasterToolbar from "@/components/custom/MasterToolbar";
 import SineWaveLoader from "@/components/custom/SineWaveLoader";
 import { AdvancedSettingsChip } from "@/components/custom/AdvancedSettingsChip";
+import { countRender } from "@/lib/render-count";
 
 export default function Dashboard() {
-  const [isLoading, setIsLoading] = useState(false);
-  const { tracks, setTracks, triggerRerender, processingLoading } =
-    useAudioStore();
+  if (import.meta.env.DEV) countRender("Dashboard");
 
-  const updateTrackCallback = useCallback((tracks: EditorTrack[]) => {
-    setTracks(tracks);
-    // trigger re-render, dumb hack to work around updating above refs, but it works
-    triggerRerender();
-  }, []);
+  /**
+   * Subscribes to the **files**, not the tracks.
+   *
+   * A `File` object is kept across a merge, so this list stays shallow-equal
+   * when a region changes. Dashboard therefore does not redraw when the user
+   * drags a region — only the card that owns it does.
+   */
+  const files = useAudioStore(
+    useShallow((state) => state.tracks.map((track) => track.file))
+  );
+  const isLoading = useAudioStore((state) => state.processingLoading);
+  const setTracks = useAudioStore((state) => state.setTracks);
 
-  useEffect(() => {
-    setIsLoading(processingLoading);
-  }, [processingLoading]);
+  const updateTrackCallback = useCallback(
+    (tracks: EditorTrack[]) => {
+      // No forced redraw. `setTracks` writes real state, so Zustand notifies
+      // whoever is subscribed and nobody else.
+      setTracks(tracks);
+    },
+    [setTracks]
+  );
 
   return (
     <>
@@ -44,13 +56,13 @@ export default function Dashboard() {
                 <BrowserMultiFileUpload
                   onUploadComplete={updateTrackCallback}
                 />
-                {tracks.current.length > 0 && (
+                {files.length > 0 && (
                   <div>
                     <AdvancedSettingsChip />
                     <MasterToolbar />
-                    {tracks.current.map((track, index) => (
-                      <div key={index} className={"my-4"}>
-                        <AudioEditor track={track} />
+                    {files.map((file) => (
+                      <div key={file.name} className={"my-4"}>
+                        <AudioEditor file={file} />
                       </div>
                     ))}
                   </div>

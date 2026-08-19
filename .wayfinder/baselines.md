@@ -228,6 +228,22 @@ the same file again at `src/lib/audio-service.ts:53`.
 So a 45-minute MP3 export pays roughly 10.3 s of decode twice, and half of each
 is a pointless re-render.
 
+**Half of this is already fixed, 2026-08-18.**
+[009 — Replace the store's ref and rerender hack](./tickets/009-replace-store-rerender-hack.md)
+removed the `audioService.loadFile` call, which was dead: it wrote to a private
+buffer nothing ever read. Counted again in the production build, per file
+dropped:
+
+| | Recorded here | After ticket 009 |
+|---|---|---|
+| `decodeAudioData` calls on drop | 2 | **1** |
+| offline renders on drop | 1 | **0** |
+| time to first waveform, 30 s | 864.2 ms | 689 ms |
+
+The wasteful `OfflineAudioContext` render inside `AudioLoader.loadAudioFile`
+itself is untouched. That is still ticket 008's to remove. **Ticket 008 must beat
+the newer figures, not the ones recorded above.**
+
 ### 5. MP3 export is the single slowest stage
 
 `shine.js` is pure JavaScript. Against the hand-written WAV writer, on identical

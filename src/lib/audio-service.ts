@@ -1,4 +1,3 @@
-import { MutableRefObject } from "react";
 import { AudioLoader } from "./audio-loader";
 import { AudioTrimmer } from "./audio-trimmer";
 import JSZip from "jszip";
@@ -48,14 +47,14 @@ export class AudioService {
     trimSilence: boolean,
     exportFileType: OutputFormat
   ): Promise<string | null> {
-    if (!track?.selectedRegion) return null;
+    if (!track?.region) return null;
 
     const tBuffer = await AudioLoader.loadAudioFile(track.file);
 
     let trimmedBuffer = AudioTrimmer.trimAudio(
       tBuffer,
-      track.selectedRegion.start,
-      track.selectedRegion.end
+      track.region.start,
+      track.region.end
     );
 
     if (normalize) {
@@ -75,7 +74,7 @@ export class AudioService {
   }
 
   public static async sliceAllFilesIntoZip(
-    tracks: MutableRefObject<EditorTrack[]>,
+    tracks: EditorTrack[],
     normalize: boolean,
     applyPostProcessing: boolean,
     trimSilence: boolean,
@@ -84,8 +83,8 @@ export class AudioService {
     const zip = new JSZip();
     const promises: Promise<void>[] = [];
 
-    for (const track of tracks.current) {
-      if (!track.selectedRegion) continue;
+    for (const track of tracks) {
+      if (!track.region) continue;
 
       const downloadUrl = await this.sliceAudio(
         track,

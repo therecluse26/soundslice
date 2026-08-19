@@ -11,6 +11,12 @@ grep -L "^\*\*Status:\*\* closed" .wayfinder/tickets/*.md \
   | xargs grep -l "^\*\*Assignee:\*\* _unclaimed_"
 ```
 
+**When you close a ticket, update every ticket it blocked.** The query matches
+the literal word `none`. It cannot follow a link to see that a blocker is closed,
+so a stale `Blocked by:` line hides a takeable ticket from the frontier. Ticket
+009 was invisible for a session because of this. Write
+`none — was [name](link), closed <date>` so the history survives.
+
 ## Destination
 
 SoundSlice ships a **Simple view** and an **Advanced view** over one shared audio
@@ -122,6 +128,20 @@ chips that can be reordered, with draggable crossfades between them.
   bundle acceptance failed as written — adding a control costs 0.93 KiB gzip —
   but no Advanced code is in the Simple bundle. `ModeToggle` was deliberately
   not wired: the theme is forced to dark, so it would do nothing.
+
+- [009 — Replace the store's ref and rerender hack](./tickets/009-replace-store-rerender-hack.md)
+  — **built.** The store holds real state; `rerender` and `triggerRerender` are
+  gone, and that closes the third of the three known defects. Adding a file to
+  three already loaded fell from 48 renders to 12, and no existing card redraws.
+  Each card subscribes to its own track and takes a `File` prop, so `React.memo`
+  finally works. The wavesurfer `Region` object is out of the store; a track now
+  holds `{ start, end }`. Two more defects fixed on the way: dropping a file used
+  to duplicate every earlier track, and used to throw away their regions.
+  Dropping a file now costs one decode instead of two, and no offline render, so
+  [`baselines.md`](./baselines.md) finding 4 carries newer numbers that ticket 008
+  must beat. Master defaults now persist. Simple view's output is byte-identical,
+  proved against commit `741dc1f`. Revoking each track's blob URL was tried and
+  reverted — it breaks under StrictMode — and is now ticket 015.
 
 ## Not yet specified
 

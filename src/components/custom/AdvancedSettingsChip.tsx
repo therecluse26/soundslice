@@ -16,8 +16,9 @@ import { useEffectiveView } from "@/hooks/useEffectiveView";
  */
 export function AdvancedSettingsChip() {
   const view = useEffectiveView();
-  const tracks = useAudioStore((state) => state.tracks);
-  const count = countAdvancedSettings(tracks.current);
+  // Selects the count, not the array, so this redraws only when the number
+  // changes — not every time any track changes.
+  const count = useAudioStore((state) => countAdvancedSettings(state.tracks));
 
   if (view !== "simple" || count === 0) return null;
 

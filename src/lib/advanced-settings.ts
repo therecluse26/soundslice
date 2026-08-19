@@ -51,10 +51,10 @@ function hasExtraRegions(track: EditorTrack): boolean {
 }
 
 /**
- * `EditorTrack` still holds a single `selectedRegion`. Many regions per track
- * arrive with the Regions feature, and this is the one place that has to change
- * when they do.
+ * `EditorTrack` still holds a single `region`. Many regions per track arrive
+ * with the Regions feature, and this is the one place that has to change when
+ * they do.
  */
 function regionCount(track: EditorTrack): number {
-  return track.selectedRegion ? 1 : 0;
+  return track.region ? 1 : 0;
 }

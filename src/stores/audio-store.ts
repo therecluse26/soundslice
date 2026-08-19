@@ -1,7 +1,5 @@
-import { Region } from "wavesurfer.js/dist/plugins/regions";
 import { create } from "zustand";
 import { OutputFormat } from "@/lib/audio-service";
-import { MutableRefObject } from "react";
 import { readPersisted, writePersisted } from "@/lib/persisted";
 import {
   DEFAULT_VIEW,
@@ -10,41 +8,80 @@ import {
   VIEW_STORAGE_VERSION,
   isView,
 } from "@/lib/view";
+import {
+  DEFAULT_MASTER_DEFAULTS,
+  MASTER_DEFAULTS_STORAGE_KEY,
+  MASTER_DEFAULTS_STORAGE_VERSION,
+  MasterDefaults,
+  isMasterDefaults,
+} from "@/lib/master-defaults";
+
+/**
+ * The part of a region this app owns: two numbers, in seconds.
+ *
+ * Never the wavesurfer `Region` object. That is a live object owned by the
+ * regions plugin, with its own listeners and its own lifecycle. Holding it in
+ * reactive state gives stale reads and update loops, so the plugin object stays
+ * inside `AudioEditor` and only these two numbers come out.
+ */
+export type TrackRegion = {
+  start: number;
+  end: number;
+};
 
 export type EditorTrack = {
   file: File;
-  selectedRegion?: Region;
+  region?: TrackRegion;
 };
 
 interface AudioState {
-  tracks: MutableRefObject<EditorTrack[]>;
+  /**
+   * Real state, one entry per loaded file.
+   *
+   * Updated immutably, and only the changed track gets a new object. Every
+   * other track keeps its identity, so a card that did not change does not
+   * redraw. That is this store's whole job.
+   */
+  tracks: EditorTrack[];
 
+  /**
+   * Takes the uploader's list and merges it into the tracks already loaded.
+   *
+   * Two things it must do, and both are defects it fixes:
+   *
+   * 1. **Keep regions.** `BrowserMultiFileUpload` rebuilds every track as a
+   *    fresh object each time it reports, so a plain replace threw away the
+   *    region of every earlier track.
+   * 2. **Keep one card per file.** That uploader re-sends its whole history, so
+   *    a plain append gave seven cards for four files.
+   *
+   * Files are matched on name. Two different files with the same name collide,
+   * which is what `getTrack` already assumed before this rewrite.
+   */
   setTracks: (tracks: EditorTrack[]) => void;
-  addTrack: (track: EditorTrack) => void;
-  getTrack: (fileName: string) => EditorTrack | undefined;
-  setTrackSelectedRegion: (fileName: string, region: Region) => void;
 
-  normalizeAudio: MutableRefObject<boolean>;
+  /** A non-reactive read, for event handlers. Components select instead. */
+  getTrack: (fileName: string) => EditorTrack | undefined;
+
+  setTrackRegion: (fileName: string, region: TrackRegion) => void;
+
+  normalizeAudio: boolean;
   setNormalizeAudio: (normalize: boolean) => void;
 
-  applyPostProcessing: MutableRefObject<boolean>;
+  applyPostProcessing: boolean;
   setApplyPostProcessing: (apply: boolean) => void;
 
-  trimSilence: MutableRefObject<boolean>;
+  trimSilence: boolean;
   setTrimSilence: (trim: boolean) => void;
 
-  exportFileType: MutableRefObject<OutputFormat>;
+  exportFileType: OutputFormat;
   setExportFileType: (fileType: OutputFormat) => void;
-
-  rerender: number;
-  triggerRerender: () => void;
 
   processingLoading: boolean;
   setProcessingLoading: (loading: boolean) => void;
 
   /**
-   * Which set of controls is on screen. Real reactive state, not a ref, so a
-   * component can subscribe to it alone.
+   * Which set of controls is on screen.
    *
    * This is the *stored* view. What the user actually gets is the effective
    * view, which is Simple below 800 px. See `useEffectiveView`.
@@ -53,67 +90,107 @@ interface AudioState {
   setView: (view: View) => void;
 }
 
-export const useAudioStore = create<AudioState>((set, get) => ({
-  tracks: { current: [] },
+const storedMasterDefaults: MasterDefaults =
+  readPersisted(
+    MASTER_DEFAULTS_STORAGE_KEY,
+    MASTER_DEFAULTS_STORAGE_VERSION,
+    isMasterDefaults
+  ) ?? DEFAULT_MASTER_DEFAULTS;
 
-  setTracks: (tracks: EditorTrack[]) => {
-    get().tracks.current = tracks;
-  },
+export const useAudioStore = create<AudioState>((set, get) => {
+  /** Writes the whole master defaults object, with one key changed. */
+  const persistMasterDefault = <K extends keyof MasterDefaults>(
+    key: K,
+    value: MasterDefaults[K]
+  ) => {
+    const { normalizeAudio, applyPostProcessing, trimSilence, exportFileType } =
+      get();
 
-  addTrack: (track: EditorTrack) => {
-    get().tracks.current = [...get().tracks.current, track];
-  },
-
-  getTrack: (fileName: string) =>
-    get().tracks.current.find((f) => f.file.name === fileName),
-
-  setTrackSelectedRegion: (fileName, region) => {
-    get().tracks.current = get().tracks.current.map((track) => {
-      if (track.file.name === fileName) {
-        return { ...track, selectedRegion: region };
+    writePersisted(
+      MASTER_DEFAULTS_STORAGE_KEY,
+      MASTER_DEFAULTS_STORAGE_VERSION,
+      {
+        normalizeAudio,
+        applyPostProcessing,
+        trimSilence,
+        exportFileType,
+        [key]: value,
       }
-      return track;
-    });
-  },
+    );
+  };
 
-  normalizeAudio: { current: false },
+  return {
+    tracks: [],
 
-  setNormalizeAudio: (normalize: boolean) => {
-    get().normalizeAudio.current = normalize;
-  },
+    setTracks: (incoming: EditorTrack[]) => {
+      const existing = get().tracks;
+      const merged: EditorTrack[] = [];
+      const seen = new Set<string>();
 
-  applyPostProcessing: { current: false },
+      for (const track of incoming) {
+        const name = track.file.name;
+        if (seen.has(name)) continue;
+        seen.add(name);
 
-  setApplyPostProcessing: (apply: boolean) => {
-    get().applyPostProcessing.current = apply;
-  },
+        // Keep the object already in the store, so its region survives and its
+        // card keeps the identity that stops it redrawing.
+        merged.push(existing.find((t) => t.file.name === name) ?? track);
+      }
 
-  trimSilence: { current: false },
+      set({ tracks: merged });
+    },
 
-  setTrimSilence: (trim: boolean) => {
-    get().trimSilence.current = trim;
-  },
+    getTrack: (fileName: string) =>
+      get().tracks.find((track) => track.file.name === fileName),
 
-  exportFileType: { current: OutputFormat.WAV },
+    setTrackRegion: (fileName: string, region: TrackRegion) => {
+      set({
+        tracks: get().tracks.map((track) =>
+          track.file.name === fileName ? { ...track, region } : track
+        ),
+      });
+    },
 
-  setExportFileType: (fileType: OutputFormat) => {
-    get().exportFileType.current = fileType;
-  },
+    normalizeAudio: storedMasterDefaults.normalizeAudio,
 
-  rerender: 0,
-  triggerRerender: () => set({ rerender: Math.random() }),
+    setNormalizeAudio: (normalizeAudio: boolean) => {
+      persistMasterDefault("normalizeAudio", normalizeAudio);
+      set({ normalizeAudio });
+    },
 
-  processingLoading: false,
+    applyPostProcessing: storedMasterDefaults.applyPostProcessing,
 
-  setProcessingLoading: (loading: boolean) =>
-    set({ processingLoading: loading }),
+    setApplyPostProcessing: (applyPostProcessing: boolean) => {
+      persistMasterDefault("applyPostProcessing", applyPostProcessing);
+      set({ applyPostProcessing });
+    },
 
-  view:
-    readPersisted(VIEW_STORAGE_KEY, VIEW_STORAGE_VERSION, isView) ??
-    DEFAULT_VIEW,
+    trimSilence: storedMasterDefaults.trimSilence,
 
-  setView: (view: View) => {
-    writePersisted(VIEW_STORAGE_KEY, VIEW_STORAGE_VERSION, view);
-    set({ view });
-  },
-}));
+    setTrimSilence: (trimSilence: boolean) => {
+      persistMasterDefault("trimSilence", trimSilence);
+      set({ trimSilence });
+    },
+
+    exportFileType: storedMasterDefaults.exportFileType,
+
+    setExportFileType: (exportFileType: OutputFormat) => {
+      persistMasterDefault("exportFileType", exportFileType);
+      set({ exportFileType });
+    },
+
+    processingLoading: false,
+
+    setProcessingLoading: (processingLoading: boolean) =>
+      set({ processingLoading }),
+
+    view:
+      readPersisted(VIEW_STORAGE_KEY, VIEW_STORAGE_VERSION, isView) ??
+      DEFAULT_VIEW,
+
+    setView: (view: View) => {
+      writePersisted(VIEW_STORAGE_KEY, VIEW_STORAGE_VERSION, view);
+      set({ view });
+    },
+  };
+});

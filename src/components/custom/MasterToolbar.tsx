@@ -19,19 +19,31 @@ import { useAudioStore } from "@/stores/audio-store";
 import { OutputFormat, AudioService } from "@/lib/audio-service";
 import { DownloadIcon, QuestionMarkCircledIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { countRender } from "@/lib/render-count";
 
 const MasterToolbar = () => {
-  const {
-    tracks,
-    normalizeAudio,
-    setNormalizeAudio,
-    applyPostProcessing,
-    setApplyPostProcessing,
-    trimSilence,
-    exportFileType,
-    setExportFileType,
-    setProcessingLoading,
-  } = useAudioStore();
+  if (import.meta.env.DEV) countRender("MasterToolbar");
+
+  // One selector per setting, so this toolbar redraws when a master default
+  // changes and the track cards do not. `tracks` is deliberately not selected:
+  // the export handler reads it once, at click time, from `getState()`.
+  const normalizeAudio = useAudioStore((state) => state.normalizeAudio);
+  const setNormalizeAudio = useAudioStore((state) => state.setNormalizeAudio);
+  const applyPostProcessing = useAudioStore(
+    (state) => state.applyPostProcessing
+  );
+  const setApplyPostProcessing = useAudioStore(
+    (state) => state.setApplyPostProcessing
+  );
+  // Selected for the commented-out Trim Silence control below, so uncommenting
+  // it needs no other change. The operation itself is removed by ticket 008.
+  const trimSilence = useAudioStore((state) => state.trimSilence);
+  const setTrimSilence = useAudioStore((state) => state.setTrimSilence);
+  const exportFileType = useAudioStore((state) => state.exportFileType);
+  const setExportFileType = useAudioStore((state) => state.setExportFileType);
+  const setProcessingLoading = useAudioStore(
+    (state) => state.setProcessingLoading
+  );
 
   const [downloading, setDownloading] = useState(false);
 
@@ -43,11 +55,11 @@ const MasterToolbar = () => {
 
     try {
       const respUrl = await AudioService.sliceAllFilesIntoZip(
-        tracks,
-        normalizeAudio.current,
-        applyPostProcessing.current,
-        trimSilence.current,
-        exportFileType.current
+        useAudioStore.getState().tracks,
+        normalizeAudio,
+        applyPostProcessing,
+        trimSilence,
+        exportFileType
       );
 
       const link = document.createElement("a");
@@ -86,7 +98,7 @@ const MasterToolbar = () => {
               onValueChange={(checked) => {
                 setNormalizeAudio(checked === "true");
               }}
-              defaultValue={normalizeAudio.current.toString()}
+              value={normalizeAudio.toString()}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -113,7 +125,7 @@ const MasterToolbar = () => {
               onValueChange={(checked) => {
                 setApplyPostProcessing(checked === "true");
               }}
-              defaultValue={applyPostProcessing.current.toString()}
+              value={applyPostProcessing.toString()}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -130,7 +142,7 @@ const MasterToolbar = () => {
               onValueChange={(checked) => {
                 setTrimSilence(checked === "true");
               }}
-              defaultValue={trimSilence.current.toString()}
+              value={trimSilence.toString()}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -145,7 +157,7 @@ const MasterToolbar = () => {
             <Label className="w-full">Output Format</Label>
             <Select
               onValueChange={setExportFileType}
-              defaultValue={exportFileType.current}
+              value={exportFileType}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />

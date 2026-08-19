@@ -23,12 +23,13 @@ import {
   ReloadIcon,
 } from "@radix-ui/react-icons";
 import { useTheme } from "@/hooks/useTheme";
-import { EditorTrack, useAudioStore } from "@/stores/audio-store";
+import { useAudioStore } from "@/stores/audio-store";
 import { AudioService } from "@/lib/audio-service";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { Slider } from "../ui/slider";
 import { useEffectiveView } from "@/hooks/useEffectiveView";
 import { HiddenRegionsChip } from "./HiddenRegionsChip";
+import { countRender } from "@/lib/render-count";
 
 /**
  * The lazy-load boundary for Advanced view.
@@ -40,7 +41,15 @@ const AdvancedPanel = lazy(() => import("./advanced/AdvancedPanel"));
 
 // Interfaces
 interface EditorProps {
-  track: EditorTrack;
+  /**
+   * The file this card owns.
+   *
+   * A `File`, not an `EditorTrack`, and deliberately. The store keeps the same
+   * `File` object across a merge, so this prop never changes identity and
+   * `React.memo` blocks every redraw driven by the parent. The card's own
+   * redraws come from its own store selector below.
+   */
+  file: File;
 }
 
 // Utility functions
@@ -53,17 +62,19 @@ const filenameWithoutExtension = (filename: string) => {
   return filename.split(".").slice(0, -1).join(".");
 };
 
-export const AudioEditor = React.memo(({ track }: EditorProps) => {
+export const AudioEditor = React.memo(({ file }: EditorProps) => {
+  if (import.meta.env.DEV) countRender(`AudioEditor:${file.name}`);
+
   // Hooks
   const { theme } = useTheme();
-  const {
-    getTrack,
-    setTrackSelectedRegion,
-    normalizeAudio,
-    applyPostProcessing,
-    trimSilence,
-    exportFileType,
-  } = useAudioStore();
+
+  // Subscribes to this one track. Editing another track leaves this selector's
+  // result identical, so this card does not redraw.
+  const track = useAudioStore((state) =>
+    state.tracks.find((t) => t.file.name === file.name)
+  );
+  const setTrackRegion = useAudioStore((state) => state.setTrackRegion);
+
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
   const isMobile = useMediaQuery("(max-width: 800px)");
@@ -102,8 +113,10 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     () => [regionsPlugin, hoverPlugin, timelinePlugin, zoomPlugin],
     [regionsPlugin, hoverPlugin, timelinePlugin, zoomPlugin]
   );
-  const url = useMemo(() => URL.createObjectURL(track.file), [track]);
-  const audioService = useMemo(() => new AudioService(), []);
+
+  // Keyed on the file, not the track. A region write gives a new track object,
+  // and rebuilding this URL there would reload the whole waveform on every drag.
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
 
   // Wavesurfer setup
   const { wavesurfer } = useWavesurfer({
@@ -122,32 +135,37 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     fillParent: true,
   });
 
-  // Add smooth resize handling
+  // NOTE: this URL is never revoked, so every track holds its audio for the
+  // life of the page. Revoking it here was tried and reverted. React
+  // StrictMode mounts an effect, tears it down, and mounts it again, so the
+  // cleanup ran while the card was still alive and every waveform stopped at
+  // "Preparing audio..." with ERR_FILE_NOT_FOUND. A correct fix has to create
+  // and revoke the URL inside one effect, which means the first render has no
+  // URL to give wavesurfer. That is a change to how the card loads, not a
+  // change to the store, so it does not belong in this ticket.
+
+  // Redraw the waveform when its container changes width.
+  //
+  // This was a `requestAnimationFrame` loop that ran forever, per track, just to
+  // poll `clientWidth`. A `ResizeObserver` gives the same signal and costs
+  // nothing while the width is steady. The width guard stays: setting the width
+  // resizes the canvas, which would otherwise call the observer back.
   useEffect(() => {
-    if (!wavesurfer || !audioContainer.current) return;
+    const container = audioContainer.current;
+    if (!wavesurfer || !container) return;
 
-    let rafId: number;
-    let lastWidth = audioContainer.current.clientWidth;
+    let lastWidth = container.clientWidth;
 
-    const handleResize = () => {
-      if (!audioContainer.current) return;
-      
-      const currentWidth = audioContainer.current.clientWidth;
-      if (currentWidth !== lastWidth) {
-        lastWidth = currentWidth;
-        wavesurfer.setOptions({
-          container: audioContainer.current,
-          width: currentWidth,
-        });
-      }
-      rafId = requestAnimationFrame(handleResize);
-    };
+    const observer = new ResizeObserver(() => {
+      const currentWidth = container.clientWidth;
+      if (currentWidth === lastWidth) return;
 
-    rafId = requestAnimationFrame(handleResize);
+      lastWidth = currentWidth;
+      wavesurfer.setOptions({ container, width: currentWidth });
+    });
 
-    return () => {
-      cancelAnimationFrame(rafId);
-    };
+    observer.observe(container);
+    return () => observer.disconnect();
   }, [wavesurfer]);
 
   // Callbacks
@@ -156,34 +174,63 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
     isPlaying.current = !isPlaying.current;
   }, [wavesurfer]);
 
-  const onUpdatedRegion = useCallback((region: Region) => {
-    setTrackSelectedRegion(track.file.name, region);
-    setSelectionDuration(region.end - region.start);
+  /**
+   * Fires when a drag or resize **finishes**, once, not once per frame. So the
+   * store takes one write per edit. Only the two numbers cross the boundary;
+   * the wavesurfer `Region` object stays in this component.
+   */
+  const onUpdatedRegion = useCallback(
+    (region: Region) => {
+      if (import.meta.env.DEV) countRender("event:region-updated");
 
-    if (
-      isPlaying.current &&
-      (currentTimeRef.current < region.start ||
-        currentTimeRef.current > region.end)
-    ) {
-      region.play();
-    }
-  }, []);
+      setTrackRegion(file.name, { start: region.start, end: region.end });
+      setSelectionDuration(region.end - region.start);
+
+      if (
+        isPlaying.current &&
+        (currentTimeRef.current < region.start ||
+          currentTimeRef.current > region.end)
+      ) {
+        region.play();
+      }
+    },
+    [file.name, setTrackRegion]
+  );
 
   const downloadTrimmedFile = async () => {
     setDownloading(true);
+
+    // Read at click time, so this card never subscribes to the export settings.
+    const {
+      getTrack,
+      normalizeAudio,
+      applyPostProcessing,
+      trimSilence,
+      exportFileType,
+    } = useAudioStore.getState();
+
+    const currentTrack = getTrack(file.name);
+    if (!currentTrack) {
+      setDownloading(false);
+      return;
+    }
+
     const blobUrl = await AudioService.sliceAudio(
-      getTrack(track.file.name)!,
-      normalizeAudio.current,
-      applyPostProcessing.current,
-      trimSilence.current,
-      exportFileType.current
+      currentTrack,
+      normalizeAudio,
+      applyPostProcessing,
+      trimSilence,
+      exportFileType
     );
-    if (!blobUrl) return;
+    if (!blobUrl) {
+      setDownloading(false);
+      return;
+    }
 
     const link = document.createElement("a");
     link.style.display = "none";
     link.href = blobUrl;
-    link.download = `trimmed_${filenameWithoutExtension(track.file.name)}`;
+    link.download = `trimmed_${filenameWithoutExtension(file.name)}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -191,10 +238,6 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
   };
 
   // Effects
-  useEffect(() => {
-    audioService.loadFile(track.file);
-  }, [track, audioService]);
-
   useEffect(() => {
     if (!wavesurfer) return;
 
@@ -263,11 +306,11 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
       if(!inFocus.current) return;
 
       // Prevent spacebar from triggering if user is typing in an input field
-      if (event.target instanceof HTMLInputElement || 
+      if (event.target instanceof HTMLInputElement ||
           event.target instanceof HTMLTextAreaElement) {
         return;
       }
-      
+
       if (event.code === 'Space') {
         event.preventDefault();
         onPlayPause();
@@ -302,8 +345,8 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
         )}
 
         <div className="w-full scrollbar-thin scrollbar-track-background scrollbar-thumb-primary hover:scrollbar-thumb-primary">
-          <div 
-            ref={audioContainer} 
+          <div
+            ref={audioContainer}
             className="cursor-text min-w-full"
           />
         </div>
@@ -320,13 +363,13 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
               <div className={isMobile ? "text-sm" : ""}>
                 File:{" "}
                 <i className="text-primary text-wrap break-all">
-                  {getTrack(track.file.name)?.file.name}
+                  {file.name}
                 </i>
               </div>
               <div className={isMobile ? "text-sm" : ""}>
                 Selection duration: <code>{formatTime(selectionDuration)}</code>
               </div>
-              <HiddenRegionsChip track={track} />
+              {track && <HiddenRegionsChip track={track} />}
             </div>
             <div className="flex gap-2 items-center w-[300px]">
                 Zoom:
@@ -341,7 +384,7 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
             <div
               className={`${isMobile ? "flex justify-between" : "flex gap-4"}`}
             >
-              
+
               <Button
                 onClick={onPlayPause}
                 className={`bg-primary-foreground text-primary hover:bg-primary hover:text-primary-foreground px-4 py-2 ${
@@ -380,7 +423,7 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
 
         {/*
           The Advanced panel sits below the waveform and the controls, so
-          switching view never moves the waveform. That is this ticket's
+          switching view never moves the waveform. That is ticket 012's
           acceptance: the thing the user is looking at stays where it is.
         */}
         {ready && view === "advanced" && (
