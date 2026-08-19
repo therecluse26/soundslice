@@ -1,8 +1,8 @@
 # 007 — Design the worker boundary
 
 **Type:** `wayfinder:grilling`
-**Status:** open
-**Assignee:** _unclaimed_
+**Status:** closed
+**Assignee:** claude
 **Blocked by:** none
 **Blocks:** [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md)
 **Map:** [Simple view and Advanced view](../map.md)
@@ -113,3 +113,69 @@ number.
 This ticket has a hard constraint from the map: Simple view must not get slower.
 Moving work into a worker adds transfer cost. If the split makes Simple slower,
 the split is wrong.
+
+---
+
+## Resolution — 2026-08-19
+
+**Answered.** The design is
+[`designs/worker-boundary.md`](../designs/worker-boundary.md), grilled and agreed.
+
+The ticket asked which stages move into a worker. That question was already dead
+before this session: Web Audio is `[Exposed=Window]`. What was left is narrow,
+and all four remaining questions are settled.
+
+### The five decisions
+
+| # | Decision |
+|---|---|
+| 1 | **The worker encodes, and nothing else.** Decode, graph and render all stay on the main thread, because they cannot go anywhere else. Decode was never a freeze: 1129 ms, 67 frames drawn. |
+| 2 | **PCM is transferred, never shared.** `SharedArrayBuffer` needs COOP and COEP headers, and GitHub Pages sets no custom headers. Transfer also halves peak memory: a 45-minute stereo track is 1.04 GB, and copying makes 2.08 GB exist at once. |
+| 3 | **One encode worker, for the life of the page.** A pool was rejected: the step in front of encoding is serial whatever the worker does, and a pool of *K* multiplies peak memory by *K*. |
+| 4 | **Cancel abandons the result, it does not stop the render.** A generation number rides with each render; a stale result is dropped and its URL revoked. |
+| 5 | **1 GB of encoded audio, and no decoded buffer is ever cached.** A drop that would cross the line is refused, with the reason shown. Nothing is evicted behind the user's back. |
+
+**The export stays serial.** Overlapping the encode of file *N* with the render
+of file *N+1* is possible with one worker and no pool. It is deliberately not
+built: it doubles peak memory to save a share of the work nobody has measured.
+
+### The safety rule the transfer decision costs
+
+Transferring `AudioBuffer.getChannelData(i).buffer` **detaches the whole
+`AudioBuffer`**. A later read throws `Cannot perform Construct on a detached
+ArrayBuffer`.
+
+So: transfer only the freshly rendered export buffer, never a buffer anything
+else still reads. That is safe here precisely because section 6 caches nothing.
+
+### One wrinkle the grilling created
+
+Ruling out `SharedArrayBuffer` also ruled out a flag readable mid-loop. A busy
+worker reads its inbox only when it yields.
+
+So the encoder chunks its work and yields between chunks. The cost is one
+macrotask per chunk, and it is **not measured**. Chunk size is ticket 008's to
+pick, with a measurement rather than a guess.
+
+### Found in the code while writing this
+
+- `sliceAllFilesIntoZip` is serial. It awaits each file inside a `for` loop.
+- `new AudioWorker()` runs once per file per export, and `terminate()` appears
+  nowhere in `src/`. Ten files spawn ten workers and leak all ten.
+- Channel data is copied. That `postMessage` carries no transfer list.
+- Nothing caches a decoded buffer, and `AudioLoader.loadAudioFile` decodes
+  **twice** — once through an `AudioContext`, then again through a pointless
+  `OfflineAudioContext` render.
+- **Two blob URLs per export are never revoked** — the encoded output and the
+  zip. Roughly 74 MB leaked per ten-file WAV export, and again on every repeat.
+  That is a seventh defect, now
+  [018 — Export blob URLs are never revoked](./018-revoke-export-blob-urls.md).
+  It does not block ticket 008, which rewrites both files anyway.
+
+### What is still unmeasured
+
+Every "not worth it" in this design rests on one missing number: the encode share
+of a slice. One browser run would give it. The chunk-size cost and wavesurfer's
+own per-card memory are also unmeasured, and both are named in the design.
+
+Ticket 008 is unblocked.

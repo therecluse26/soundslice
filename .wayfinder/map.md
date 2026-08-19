@@ -239,6 +239,25 @@ chips that can be reordered, with draggable crossfades between them.
   replace every earlier track. Simple bundle 136.69 → 136.76 KiB gzip. No test
   added, and the ticket says why.
 
+- [007 — Design the worker boundary](./tickets/007-design-the-worker-boundary.md)
+  — the design is [`designs/worker-boundary.md`](./designs/worker-boundary.md).
+  **The worker encodes and nothing else**, because Web Audio cannot leave the
+  main thread and decode was never a freeze. **PCM is transferred, never shared**
+  — `SharedArrayBuffer` needs COOP and COEP headers, and GitHub Pages sets none;
+  transfer also halves peak memory, 1.04 GB against 2.08 GB on a 45-minute track.
+  **One encode worker for the life of the page**, no pool: the step in front of
+  it is serial whatever the worker does. **Cancel abandons the result**, it does
+  not stop the render, so a generation number rides with each one. **The ceiling
+  is 1 GB of encoded audio, and no decoded buffer is ever cached** — a drop that
+  would cross it is refused, and nothing is evicted behind the user's back. The
+  export stays serial. One safety rule is load-bearing: transferring a channel's
+  buffer detaches the whole `AudioBuffer`, so transfer only the freshly rendered
+  export buffer. Ruling out `SharedArrayBuffer` also cost the mid-loop cancel
+  flag, so the encoder yields between chunks. Two findings: ten files spawn ten
+  workers and `terminate()` appears nowhere, and **two blob URLs per export are
+  never revoked** — about 74 MB per ten-file export, now ticket 018. Every "not
+  worth it" here rests on one unmeasured number, the encode share of a slice.
+
 ## Not yet specified
 
 - Advanced panel layout for the Regions, Sound and Export sections
@@ -251,6 +270,11 @@ chips that can be reordered, with draggable crossfades between them.
   yet. Ticket 003 settled the mechanism: copying writes the current effective
   settings into every track, turning inherited values into overrides, reversible
   with Reset all.
+- Removing one track. There is no control for it today, so "tracks on screen"
+  means "every track ever loaded", and ticket 007's 1 GB ceiling counts them all.
+  Three tickets have now wanted it — 015 could not test removal, 016 lost the
+  export as its unmount path, and 017 had to reach for `setTracks` to force a
+  remount. It belongs to a feature chain that does not exist yet.
 - The region tools — split on silence, and snap to transients. Ticket 002 ruled
   both out of the edit stack: they make and move regions, they do not change
   sound. So each needs its own detection design, and neither is sharp yet.

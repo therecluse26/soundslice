@@ -3,7 +3,7 @@
 **Type:** `wayfinder:task`
 **Status:** open
 **Assignee:** _unclaimed_
-**Blocked by:** [007 — Design the worker boundary](./007-design-the-worker-boundary.md) — was also [002](./002-design-the-edit-stack.md), [006](./006-install-vitest.md) and [013](./013-post-processing-guard-defect.md), all closed 2026-08-19
+**Blocked by:** none — was [007](./007-design-the-worker-boundary.md), [002](./002-design-the-edit-stack.md), [006](./006-install-vitest.md) and [013](./013-post-processing-guard-defect.md), all closed 2026-08-19
 **Blocks:** [010 — Build LUFS normalization with tests](./010-build-lufs-normalization.md), [011 — WebCodecs encoder path with fallback](./011-webcodecs-encoder-path.md)
 **Map:** [Simple view and Advanced view](../map.md)
 
