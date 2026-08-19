@@ -3,7 +3,7 @@
 **Type:** `wayfinder:task`
 **Status:** open
 **Assignee:** _unclaimed_
-**Blocked by:** [004 — Research WebCodecs AudioEncoder](./004-research-webcodecs-audioencoder.md), [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md)
+**Blocked by:** [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md) — was also [004](./004-research-webcodecs-audioencoder.md), closed 2026-08-18
 **Blocks:** _none_
 **Map:** [Simple view and Advanced view](../map.md)
 

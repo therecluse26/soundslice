@@ -209,6 +209,36 @@ chips that can be reordered, with draggable crossfades between them.
   collapses it into one graph anyway. [`baselines.md`](./baselines.md) carries an
   addendum with every new number.
 
+- [016 — "Slice All Files" empties the track list](./tickets/016-export-empties-track-list.md)
+  — **built.** Both pieces the ticket named were wrong, and its option 1 alone
+  could not pass its own acceptance. An empty upload list no longer reports
+  itself complete, and the loader now **covers** the page instead of replacing
+  it. The second half is what keeps the regions: a card writes a fresh 1–100
+  default region on every mount and never restores the stored one, so keeping the
+  cards without stopping the remount would still have reset every region — now
+  ticket 017. A master export costs **zero** `AudioEditor` renders and **zero**
+  region writes, where a remount cost 10 renders per card. Exporting twice then
+  adding a third file gives three cards with every region intact; it used to give
+  none. The four-row hash table from ticket 013 re-runs byte-identical, as
+  expected — no file on the audio path changed. Simple bundle 136.62 → 136.69 KiB
+  gzip, and `pnpm test` is 6 → 10 tests. Recorded in the ticket: the first master
+  export after `pnpm dev` starts makes Vite optimize `@toots/shine.js` and reload
+  the page, which looks exactly like this defect and is not.
+
+- [017 — A card rebuilds its region instead of restoring it](./tickets/017-restore-stored-region.md)
+  — **built.** A card now reads `track.region` on mount and uses the 1–100
+  default only for a track that has none. The store's region was written by the
+  card and never read back, so any remount reset the user's selection. Measured
+  across a forced remount: the readout went 01:39 → **00:52** and the store kept
+  the same float, `end: 53.418351477449455`, digit for digit. A new track still
+  gets the clamped default, and ticket 016 still holds. The larger shape — the
+  store owning regions outright — is **ticket 008's**, not this one's: the
+  default clamps to the file's duration, and only the card knows the duration,
+  and only after it decodes. One hole stays open and cannot fire today: the
+  uploader's list still decides which tracks exist, so a remounted uploader would
+  replace every earlier track. Simple bundle 136.69 → 136.76 KiB gzip. No test
+  added, and the ticket says why.
+
 ## Not yet specified
 
 - Advanced panel layout for the Regions, Sound and Export sections

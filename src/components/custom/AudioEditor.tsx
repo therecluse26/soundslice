@@ -61,6 +61,15 @@ const filenameWithoutExtension = (filename: string) => {
   return filename.split(".").slice(0, -1).join(".");
 };
 
+/**
+ * The region a track gets when it has none yet.
+ *
+ * The regions plugin clamps `end` to the file's duration, so a 30-second file
+ * gets 1–30 and a 5-minute file gets 1–100. Anything that replaces this default
+ * must keep that clamp, or a short file gets a region past its end.
+ */
+const DEFAULT_REGION = { start: 1, end: 100 };
+
 export const AudioEditor = React.memo(({ file }: EditorProps) => {
   if (import.meta.env.DEV) countRender(`AudioEditor:${file.name}`);
 
@@ -286,9 +295,23 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
 
     wavesurfer.on("ready", () => {
       setReady(true);
+
+      // Restore the region this track already has, and only fall back to the
+      // default when it has none.
+      //
+      // This card used to add `DEFAULT_REGION` every time it mounted, and then
+      // write it to the store. So the store's region was written by the card and
+      // never read back, and any remount silently reset the user's selection.
+      // See `.wayfinder/tickets/017-restore-stored-region.md`.
+      //
+      // Read through `getState`, not the `track` selector above. This runs in an
+      // event handler, so it must not make this effect depend on a value that
+      // changes on every drag.
+      const stored = useAudioStore.getState().getTrack(file.name)?.region;
+
       const newRegion = regionsPlugin.addRegion({
-        start: 1,
-        end: 100,
+        start: stored?.start ?? DEFAULT_REGION.start,
+        end: stored?.end ?? DEFAULT_REGION.end,
         content: "Clip",
         color: "rgba(254, 242, 242, 0.25)",
         minLength: 5,
@@ -309,7 +332,7 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     return () => {
       wavesurfer.unAll();
     };
-  }, [wavesurfer, regionsPlugin, onUpdatedRegion]);
+  }, [wavesurfer, regionsPlugin, onUpdatedRegion, file.name]);
 
   // Add zoom handler
   const handleZoom = useCallback(

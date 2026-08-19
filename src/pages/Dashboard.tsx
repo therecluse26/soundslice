@@ -36,41 +36,58 @@ export default function Dashboard() {
 
   return (
     <>
-      {isLoading ? (
-        <SineWaveLoader
-          message="Slicing Audio. This may take a while..."
-          messageFont="ui-sans-serif, system-ui, sans-serif"
-          messageFontSize={32}
-          color="#dc2626"
-          textColor="#fafafa"
-          lineThickness={8}
-          sideFade={600}
-          amplitude={0.1}
-          frequency={0.015}
-        />
-      ) : (
-        <>
-          <div className="flex-grow flex flex-col">
-            <div className="container px-4 md:px-8 flex-grow flex flex-col">
+      <div className="flex-grow flex flex-col">
+        <div className="container px-4 md:px-8 flex-grow flex flex-col">
+          <div>
+            <BrowserMultiFileUpload onUploadComplete={updateTrackCallback} />
+            {files.length > 0 && (
               <div>
-                <BrowserMultiFileUpload
-                  onUploadComplete={updateTrackCallback}
-                />
-                {files.length > 0 && (
-                  <div>
-                    <AdvancedSettingsChip />
-                    <MasterToolbar />
-                    {files.map((file) => (
-                      <div key={file.name} className={"my-4"}>
-                        <AudioEditor file={file} />
-                      </div>
-                    ))}
+                <AdvancedSettingsChip />
+                <MasterToolbar />
+                {files.map((file) => (
+                  <div key={file.name} className={"my-4"}>
+                    <AudioEditor file={file} />
                   </div>
-                )}
+                ))}
               </div>
-            </div>
+            )}
           </div>
-        </>
+        </div>
+      </div>
+
+      {/*
+        The loader covers the page. It does not replace it.
+
+        Replacing it unmounted `BrowserMultiFileUpload`, which came back with
+        empty state and cleared every track. Replacing it also destroyed every
+        wavesurfer instance, so each export paid to decode every file again.
+        See `.wayfinder/tickets/016-export-empties-track-list.md`.
+
+        The overlay sits above the page, so it takes the pointer events the
+        page would otherwise get.
+      */}
+      {isLoading && (
+        <div
+          className="fixed inset-0 z-50 overflow-hidden"
+          style={{ backgroundColor: "hsl(var(--background) / 0.85)" }}
+          role="status"
+          aria-live="polite"
+        >
+          <span className="sr-only">
+            Slicing Audio. This may take a while...
+          </span>
+          <SineWaveLoader
+            message="Slicing Audio. This may take a while..."
+            messageFont="ui-sans-serif, system-ui, sans-serif"
+            messageFontSize={32}
+            color="#dc2626"
+            textColor="#fafafa"
+            lineThickness={8}
+            sideFade={600}
+            amplitude={0.1}
+            frequency={0.015}
+          />
+        </div>
       )}
     </>
   );

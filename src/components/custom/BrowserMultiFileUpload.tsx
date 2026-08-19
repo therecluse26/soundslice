@@ -3,6 +3,7 @@ import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
 import { UploadIcon, FileIcon } from "@radix-ui/react-icons";
 import { EditorTrack } from "@/stores/audio-store";
+import { areUploadsComplete } from "@/lib/uploads";
 
 interface FileUpload {
   file: File;
@@ -24,12 +25,11 @@ export default function BrowserMultiFileUpload({
   const [isUploadComplete, setIsUploadComplete] = useState(false);
   const [dragDropError, setDragDropError] = useState<string | null>(null);
 
+  // `areUploadsComplete` is not `uploads.every(…)`. An empty list must report
+  // nothing at all, or a fresh mount tells the store there are zero tracks.
+  // See `.wayfinder/tickets/016-export-empties-track-list.md`.
   useEffect(() => {
-    if (
-      onUploadComplete &&
-      !isUploadComplete &&
-      uploads.every((upload) => upload.isComplete)
-    ) {
+    if (onUploadComplete && !isUploadComplete && areUploadsComplete(uploads)) {
       setIsUploadComplete(true);
       onUploadComplete(
         uploads.map((upload) => {
