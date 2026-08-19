@@ -11,6 +11,25 @@
 
 What runs on the main thread, what runs in a worker, and how do they talk?
 
+> **Three of these seven are already answered**, by
+> [002 — Design the edit stack](./002-design-the-edit-stack.md), design at
+> [`designs/edit-stack.md`](../designs/edit-stack.md). Do not redo them.
+>
+> - **Question 1, the split.** Nothing runs on the main thread. The whole edit
+>   stack is one Web Audio graph, and `OfflineAudioContext` already renders it off
+>   the main thread — measured, 103 frames drawn during 1741 ms of effects. The
+>   freeze was `AudioTrimmer.trimAudio`, our own sample loop, which is deleted.
+> - **Question 4, progress.** Solved, and chunked rendering is not needed. An
+>   `AudioWorklet` at the tail of the graph counts blocks and posts the count.
+>   Measured: 11 messages during one offline render.
+> - **Question 7, `AudioWorklet`.** Yes, and it is load-bearing. Noise reduction,
+>   time and pitch, loudness measurement and progress are all worklets. Verified
+>   that a worklet runs inside an `OfflineAudioContext`, beside a built-in node,
+>   at the same 128-sample block size as a live `AudioContext`.
+>
+> **Still open: questions 2, 3, 5 and 6** — transfer cost, worker lifetime,
+> cancellation, and the memory ceiling. Those are the real remaining work.
+
 Standing rule 7 says anything over 300 ms shows progress and runs in a worker.
 Advanced view adds noise reduction, time-stretch, and FFT work. Those will
 freeze the UI if this is settled wrong.

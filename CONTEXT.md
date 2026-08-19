@@ -24,6 +24,16 @@ _Avoid_: Pro, expert mode, premium
 Light or dark appearance. This is what `mode` means in the existing code.
 _Avoid_: colour scheme
 
+**Effective view**:
+The view actually in force. On a screen under 800 px it is always Simple,
+whatever the user chose. The view they chose is never overwritten.
+_Avoid_: current view, resolved view
+
+**Chip**:
+A small label that tells a Simple view user about something Simple cannot show,
+such as regions that will not be exported. A chip cannot be dismissed.
+_Avoid_: badge, pill, banner, toast
+
 ### The work
 
 **Track**:
@@ -33,16 +43,24 @@ _Avoid_: file, clip, stem, lane
 
 **Region**:
 A start and end point on a track, marking audio to be cut out. Simple view
-allows one per track. Advanced view allows many.
+allows one per track. Advanced view allows many. A region also carries its own
+volume, fade edges, and time and pitch.
 _Avoid_: selection, clip, range, marker
 
 **Slice**:
 The act of exporting a region as its own file.
 _Avoid_: trim, cut, render, bounce
 
+**Preview**:
+Hearing a region with its edit stack applied, before slicing it. What you hear
+and what you export always match. The "Preview effects" switch turns the
+track's effects off while listening, leaving volume and fades.
+_Avoid_: monitor, audition, playback
+
 **Operation**:
-One reversible change recorded against a track, such as a trim, a fade, or an
-EQ setting.
+One reversible change recorded against a track, such as an EQ setting or a
+compressor. Every region of that track gets it. A trim is **not** an operation:
+the region already says which audio you want.
 _Avoid_: effect, step, action
 
 **Edit stack**:
@@ -50,10 +68,26 @@ The ordered list of operations held against a track. Nothing is applied to the
 audio until export replays the stack.
 _Avoid_: pipeline, chain, history
 
+**Envelope**:
+A setting whose value changes across a track, instead of holding one value.
+Not built. This is the answer for per-moment control, so that regions never
+become the place to put it.
+_Avoid_: automation, keyframe, ramp
+
 **Master defaults**:
 Settings on the master toolbar that apply to every track unless that track
 overrides them.
 _Avoid_: global settings, presets
+
+**Inherited**:
+A setting taken from the level above — master to track, or track to region.
+Change the level above and every inherited setting follows it.
+_Avoid_: default, unset
+
+**Override**:
+A setting a track or region holds for itself, ignoring the level above.
+Resetting it removes the override, and the setting is inherited again.
+_Avoid_: custom, local, dirty
 
 ### The sound
 

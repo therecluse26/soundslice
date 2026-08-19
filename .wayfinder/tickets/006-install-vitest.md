@@ -24,6 +24,17 @@ The work:
    `OfflineAudioContext`, which `jsdom` does not provide. Options: a Node
    polyfill such as `node-web-audio-api`, a browser environment via
    `@vitest/browser`, or pure-array tests that avoid Web Audio entirely.
+
+   **Answered 2026-08-19 by
+   [002 — Design the edit stack](./002-design-the-edit-stack.md): the third
+   option, and no polyfill.** Every operation is either a built-in Web Audio node
+   — somebody else's code, not ours to test — or an `AudioWorklet`. A worklet is
+   a thin shell around a plain function over `Float32Array`. Test the function.
+   Plain `node` environment, no browser.
+
+   That also removes this ticket's worst case. It said "if Web Audio cannot be
+   made to work under test… that would be a significant constraint on ticket
+   002". Ticket 002 chose that constraint deliberately.
 4. Write one real test to prove the setup works. Suggested: `getMaxAmplitude`
    from `src/lib/audio-processors.ts:169`, which is pure and needs no context.
 5. Add a test job to `.github/workflows/build-and-deploy.yml`, or a separate

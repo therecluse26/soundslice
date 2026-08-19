@@ -51,7 +51,13 @@ default. `prototype` for UI tickets. `research` for external API tickets.
 5. **Switching views never loses work.** Advanced settings survive a switch to
    Simple. Simple shows a chip saying how many are active.
 6. **Everything Advanced-only is lazy-loaded.** A Simple user downloads none of it.
-7. **Anything over 300 ms shows progress.** Long renders run in a worker.
+7. **No audio work runs on the main thread. Anything over 300 ms shows progress.**
+
+   Reworded 2026-08-19, by ticket 002. It used to say "long renders run in a
+   worker". That blamed the wrong thing. Measured: four `OfflineAudioContext`
+   renders took 1741 ms and still drew 103 frames, so Web Audio was never the
+   problem. `AudioTrimmer.trimAudio`, a plain sample loop, froze the page for
+   454 ms and drew **zero**. The enemy is our own synchronous JavaScript.
 
 ### Settled constraints
 
@@ -143,29 +149,37 @@ chips that can be reordered, with draggable crossfades between them.
   proved against commit `741dc1f`. Revoking each track's blob URL was tried and
   reverted — it breaks under StrictMode — and is now ticket 015.
 
+- [002 — Design the edit stack](./tickets/002-design-the-edit-stack.md)
+  — the design is [`designs/edit-stack.md`](./designs/edit-stack.md), with one
+  ADR at [`docs/adr/0001-one-graph-two-contexts.md`](../docs/adr/0001-one-graph-two-contexts.md).
+  **One Web Audio graph, built once, previewed by a live `AudioContext` and
+  exported by an `OfflineAudioContext`** — so preview and export cannot disagree.
+  `AudioWorklet` fills what Web Audio lacks, and the maths inside each worklet is
+  a plain function, which settles ticket 006's environment question. Seven
+  operations on the track, plus gain, fades and time-and-pitch on the region.
+  **Trim is not an operation** — the region is the trim, now that Fade edges is a
+  real control. Canonical order in Simple; Advanced reorders freely with nothing
+  pinned. Undo is a command history, one entry per gesture. Two measurements
+  overturned the ticket's premises: Web Audio never froze the page, our own sample
+  loop did — so standing rule 7 is reworded above — and an export now follows the
+  file's sample rate rather than the machine's, which fixes a standing rule 1
+  break. Ticket 013 is unblocked and its answer is already determined.
+
 ## Not yet specified
 
 - Advanced panel layout for the Regions, Sound and Export sections
 - Decide-then-build chains for each of the fourteen features
 - The join strip — region order model, crossfade maths, single-file export path
 - Saved projects — OPFS schema, what is stored, when it is evicted
-- "Copy settings to all tracks" — which settings copy, which do not. Half
-  answered by ticket 003: copying writes the current effective settings into
-  every track's partial, turning inherited values into overrides, reversible with
-  Reset all. What remains is *which* settings copy, and that waits on the
-  operation set from ticket 002.
-- Live preview graph, and the "Fade edges" switch in Simple view. Baselines
-  finding 9: a 20 ms fade is already applied to every slice and cannot be turned
-  off (`src/lib/audio-trimmer.ts:28`). The switch exposes behaviour that exists.
-- The output sample rate contract. Baselines finding 3: every file decodes at the
-  machine's audio rate, not its own, so the same file on two machines can produce
-  different output. Standing rule 1 requires byte-identical output for the same
-  settings. Touches tickets 002, 008 and 011; not yet sharp enough to sit in one.
-- Whether `CONTEXT.md` needs an ADR for the edit stack rewrite
-- New vocabulary for `CONTEXT.md`. Ticket 003 introduced terms the project now
-  uses and has not defined: *effective view*, *override* versus *inherited*, and
-  the Simple-view *chip*. They should land in the Language section, but the full
-  set is not settled until ticket 002 names the operations.
+- "Copy settings to all tracks" — which operations copy, and which do not. Now
+  sharp enough to answer, because ticket 002 has named the operation set. It
+  belongs inside that feature's own decide-then-build chain, which does not exist
+  yet. Ticket 003 settled the mechanism: copying writes the current effective
+  settings into every track, turning inherited values into overrides, reversible
+  with Reset all.
+- The region tools — split on silence, and snap to transients. Ticket 002 ruled
+  both out of the edit stack: they make and move regions, they do not change
+  sound. So each needs its own detection design, and neither is sharp yet.
 
 ## Out of scope
 
@@ -176,5 +190,10 @@ chips that can be reordered, with draggable crossfades between them.
   and always free.
 - **Mobile layout for Advanced view.** Fine-grained audio editing on a 390 px
   screen is not a real workflow.
+- **Envelopes** — a setting whose value changes across a track. Named in ticket
+  002 as the eventual answer for per-moment control, and deliberately kept out of
+  this wave. It is a fifteenth feature, and the destination is the fourteen. It
+  matters here only as a promise: because envelopes exist as the future answer,
+  regions never have to become the place to put per-moment settings.
 - **Non-evergreen browser support.** No polyfills for browsers two or more
   versions behind.

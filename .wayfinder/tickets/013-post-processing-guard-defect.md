@@ -3,7 +3,8 @@
 **Type:** `wayfinder:task`
 **Status:** open
 **Assignee:** _unclaimed_
-**Blocked by:** [002 — Design the edit stack](./002-design-the-edit-stack.md)
+**Blocked by:** none — was
+[002 — Design the edit stack](./002-design-the-edit-stack.md), closed 2026-08-19
 **Blocks:** [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md)
 **Map:** [Simple view and Advanced view](../map.md)
 
@@ -65,8 +66,19 @@ This is not only a bug fix. Two questions need answers before the fix is right.
    Ticket 003 maps every Simple setting onto an Advanced control, so
    "Apply Post Processing" must resolve to named operations on the edit stack.
 
-Blocked on [002 — Design the edit stack](./002-design-the-edit-stack.md) because
-the answer is a statement about operation order, not a patch to one `if`.
+**Both are now answered**, by
+[002 — Design the edit stack](./002-design-the-edit-stack.md), design at
+[`designs/edit-stack.md`](../designs/edit-stack.md):
+
+1. **The limiter is on by default, not unconditional.** It is one operation in
+   the stack, last in the canonical order. It is applied whenever it is in the
+   stack — which fixes this defect. An Advanced user may move it or switch it
+   off; Simple view keeps it on and last, always.
+2. **"Apply Post Processing" is the Compressor operation**, at the numbers it
+   already uses: threshold −8 dB, ratio 4, knee 0, attack 8 ms, release 50 ms.
+
+So this ticket is no longer a design question. It is the patch, plus the proof
+that the four rows no longer collide.
 
 ## Watch for
 
