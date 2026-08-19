@@ -1,3 +1,5 @@
+import { maxAmplitude } from "./dsp";
+
 type PostProcessingProps = {
   normalize: boolean;
   compress: boolean;
@@ -163,23 +165,21 @@ export async function normalize(buffer: AudioBuffer): Promise<AudioBuffer> {
 /**
  * Calculates the maximum amplitude across all channels of an AudioBuffer.
  *
+ * The maths itself lives in `dsp.ts`, over plain `Float32Array`s, so it can be
+ * tested under Node without Web Audio. This function is the shell: it pulls the
+ * channels out of the buffer and hands them over. The numbers are unchanged.
+ *
  * @param buffer - The AudioBuffer to analyze.
  * @returns The maximum absolute amplitude value found in the buffer.
  */
 function getMaxAmplitude(buffer: AudioBuffer): number {
-  let maxAmplitude = 0;
+  const channels: Float32Array[] = [];
 
   for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < channelData.length; i++) {
-      const absValue = Math.abs(channelData[i]);
-      if (absValue > maxAmplitude) {
-        maxAmplitude = absValue;
-      }
-    }
+    channels.push(buffer.getChannelData(channel));
   }
 
-  return maxAmplitude;
+  return maxAmplitude(channels);
 }
 
 export async function trimSilence(
@@ -348,7 +348,9 @@ export async function applyProcessingPipeline(
     }
   }
 
-  // Always limit the audio to prevent clipping, no reason not to
+  // The limiter really is applied on every call now. It used to say so and not
+  // do it, because `AudioService.sliceAudio` only called this function when
+  // normalize was on. That was ticket 013.
   return inputBuffer;
 }
 

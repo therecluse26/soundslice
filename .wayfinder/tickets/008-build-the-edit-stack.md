@@ -3,7 +3,7 @@
 **Type:** `wayfinder:task`
 **Status:** open
 **Assignee:** _unclaimed_
-**Blocked by:** [002 — Design the edit stack](./002-design-the-edit-stack.md), [006 — Install Vitest](./006-install-vitest.md), [007 — Design the worker boundary](./007-design-the-worker-boundary.md), [013 — Post-processing switch does nothing unless normalize is on](./013-post-processing-guard-defect.md)
+**Blocked by:** [007 — Design the worker boundary](./007-design-the-worker-boundary.md) — was also [002](./002-design-the-edit-stack.md), [006](./006-install-vitest.md) and [013](./013-post-processing-guard-defect.md), all closed 2026-08-19
 **Blocks:** [010 — Build LUFS normalization with tests](./010-build-lufs-normalization.md), [011 — WebCodecs encoder path with fallback](./011-webcodecs-encoder-path.md)
 **Map:** [Simple view and Advanced view](../map.md)
 

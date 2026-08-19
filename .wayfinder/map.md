@@ -165,6 +165,50 @@ chips that can be reordered, with draggable crossfades between them.
   file's sample rate rather than the machine's, which fixes a standing rule 1
   break. Ticket 013 is unblocked and its answer is already determined.
 
+- [006 — Install Vitest and wire it into the build](./tickets/006-install-vitest.md)
+  — **built.** `pnpm test` runs 6 passing tests. **Vitest 0.34.6, plain `node`
+  environment, no Web Audio polyfill and no browser** — the last Vitest line that
+  runs on Vite 3, so nothing was upgraded. Ticket 002 made that possible: the
+  maths inside a worklet is a plain function over `Float32Array`, so
+  `src/lib/dsp.ts` holds it and `src/lib/dsp.test.ts` tests it. That module's
+  rule is load-bearing for every later DSP test — **the moment it imports an
+  `AudioBuffer`, the tests need a browser.** `getMaxAmplitude` is now four lines
+  of shell around `maxAmplitude`, with its numbers unchanged. A separate
+  `.github/workflows/test.yml` type-checks and tests on every push, because deploy
+  is manual and waiting for it means never finding a broken test.
+
+- [014 — The whole Tailwind config ships in the Simple bundle](./tickets/014-tailwind-config-in-simple-bundle.md)
+  — **built.** The Simple bundle is **18.4 KiB gzip smaller**, 155.02 down to
+  136.62 KiB, so ticket 008's target moves with it. `AudioEditor` reads three
+  literals from `src/lib/waveform-colors.ts` instead of resolving the Tailwind
+  config at runtime. Every default-palette hex is gone from the bundle; the three
+  we use appear once each. The waveform colour is unchanged, proved by reading the
+  canvas back pixel by pixel: one colour, `#9ca3af`. That reading also found that
+  the `theme === "dark"` branch has **never** run — `ThemeContext` defaults to the
+  string `"system"` — so the dark waveform colour is untested, not merely unused.
+
+- [015 — Track audio is never released](./tickets/015-release-track-audio.md)
+  — **built.** One effect creates the blob URL and revokes it, so the cleanup
+  always revokes the URL *that run* created. That is the whole difference from the
+  version ticket 009 reverted. Verified in the dev build with StrictMode on:
+  6 URLs created for 3 cards, the 3 discarded ones revoked, the 3 live ones kept,
+  every waveform drawn, no `ERR_FILE_NOT_FOUND`. Ten 50.4 MB tracks released
+  **505.9 MB** on unmount — **a blob URL holds its file one for one**, which is the
+  number ticket 007 was waiting on for its memory ceiling. A fifth defect fell out
+  of the testing: exporting all files empties the track list, now ticket 016.
+
+- [013 — Post-processing switch does nothing unless normalize is on](./tickets/013-post-processing-guard-defect.md)
+  — **built.** The `if (normalize)` guard is deleted, and the four-row hash table
+  now has **four distinct hashes**. The two rows where normalize was on are
+  byte-identical to the baseline, so nothing that already worked has moved; only
+  the two broken rows changed, and both changed because work the user asked for
+  now happens. The cost is one limiter render on the switches-off path — 66.9 ms
+  on a 30-second clip, which accounts for its +50.3 ms in full. The processed path
+  is at or below its baseline everywhere. This is not an engine regression: that
+  path now does work it always claimed to do and silently skipped, and ticket 008
+  collapses it into one graph anyway. [`baselines.md`](./baselines.md) carries an
+  addendum with every new number.
+
 ## Not yet specified
 
 - Advanced panel layout for the Regions, Sound and Export sections
@@ -197,3 +241,9 @@ chips that can be reordered, with draggable crossfades between them.
   regions never have to become the place to put per-moment settings.
 - **Non-evergreen browser support.** No polyfills for browsers two or more
   versions behind.
+- **Reviving light theme.** The theme is forced to dark in
+  `src/contexts/ThemeContext.tsx`, and ticket 014 found that the waveform's
+  `theme === "dark"` branch has never run at all — the context reports the string
+  `"system"`. So the dark waveform colour is untested code, not merely unused.
+  Fixing that is a look-and-feel decision, and the destination is the fourteen
+  features. `ModeToggle` stays unwired for the same reason (ticket 012).

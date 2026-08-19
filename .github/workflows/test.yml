@@ -1,0 +1,37 @@
+name: Test
+
+# Deploy is manual (`workflow_dispatch` in build-and-deploy.yml), so tests get
+# their own workflow and run on every push. Waiting for a deploy to find a
+# broken test would mean never finding it.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: ["20.9.0"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install packages
+        run: npm i
+
+      # Type-check first. `tsc` covers the test files too, because tsconfig.json
+      # includes all of src/ and the tests live beside the code they test.
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test

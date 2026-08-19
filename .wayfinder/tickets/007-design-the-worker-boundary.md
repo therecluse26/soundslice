@@ -81,6 +81,25 @@ Decide:
    buffer: `AudioEditor` creates a blob URL and never revokes it. See
    [015 — Track audio is never released](./015-release-track-audio.md). The
    ceiling has to count both.
+
+   **Measured 2026-08-19, by [015](./015-release-track-audio.md), now closed.**
+   Ten `track-5m.wav` Files, 50.4 MB each, held only by their blob URLs. Chromium
+   RSS read from `/proc`, garbage collected through CDP before each reading:
+
+   | State | Chromium RSS |
+   |---|---|
+   | Before | 1252.7 MB |
+   | Ten blob URLs alive | 1525.6 MB |
+   | The same ten revoked | 1019.7 MB |
+
+   **A loaded track costs its whole encoded file, one for one, until its card
+   unmounts.** Revoking released 505.9 MB against 503.9 MB of file data. A card
+   now revokes on unmount, so the ceiling counts encoded plus decoded for every
+   track **on screen**, and nothing for tracks whose cards are gone.
+
+   There is no way to remove one track in the UI today, so "on screen" currently
+   means "every track ever loaded". Whether Advanced view needs a remove control
+   is a feature decision, not this ticket's.
 7. **AudioWorklet.** Whether live preview needs an `AudioWorklet` for anything,
    or whether built-in nodes cover it. Note the empty stub at
    `src/lib/audio-service.ts:34`, `sliceAudioViaWorklet`, which returns `null`.

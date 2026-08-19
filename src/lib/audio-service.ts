@@ -57,14 +57,27 @@ export class AudioService {
       track.region.end
     );
 
-    if (normalize) {
-      // TODO: Make these all configurable
-      trimmedBuffer = await applyProcessingPipeline(trimmedBuffer, {
-        normalize: normalize,
-        compress: applyPostProcessing,
-        trimSilence: trimSilence,
-      });
-    }
+    // The pipeline runs on every export, not only when normalize is on.
+    //
+    // It used to be wrapped in `if (normalize)`. So "Apply Post Processing? Yes"
+    // with "Normalize Levels? No" applied nothing at all, and the limiter — the
+    // one thing the pipeline marks always-on — never ran either. That is
+    // ticket 013, and it was proved with four exports that hashed to three
+    // distinct values instead of four.
+    //
+    // What the limiter is was settled by the edit stack design: one operation in
+    // the stack, on by default, last in the canonical order. Simple view keeps
+    // it on and last, always. So there is no export this pipeline should skip.
+    //
+    // `trimSilence` is still threaded through, and is still false everywhere:
+    // its control is commented out in `MasterToolbar` and its default is false.
+    // The operation is known broken and ticket 008 removes it. This fix must not
+    // be the thing that switches it back on.
+    trimmedBuffer = await applyProcessingPipeline(trimmedBuffer, {
+      normalize: normalize,
+      compress: applyPostProcessing,
+      trimSilence: trimSilence,
+    });
 
     return await AudioTrimmer.createDownloadLink(
       trimmedBuffer,

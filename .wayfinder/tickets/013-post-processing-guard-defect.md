@@ -1,8 +1,8 @@
 # 013 — Post-processing switch does nothing unless normalize is on
 
 **Type:** `wayfinder:task`
-**Status:** open
-**Assignee:** _unclaimed_
+**Status:** closed
+**Assignee:** agent session 2026-08-19 (build sweep)
 **Blocked by:** none — was
 [002 — Design the edit stack](./002-design-the-edit-stack.md), closed 2026-08-19
 **Blocks:** [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md)
@@ -95,3 +95,108 @@ Do not restore it here.
 Every combination of the two switches produces the output its labels promise.
 The four-row hash table above is regenerated, and no two rows collide unless the
 settings genuinely mean the same thing.
+
+---
+
+## Resolution — 2026-08-19
+
+**Fixed.** The four rows now hash to four distinct values. Every combination of
+the two switches produces the output its labels promise.
+
+### The patch
+
+`src/lib/audio-service.ts` — the guard is gone. `applyProcessingPipeline` runs on
+every export:
+
+```diff
+-    if (normalize) {
+-      trimmedBuffer = await applyProcessingPipeline(trimmedBuffer, {
+-        normalize: normalize,
+-        compress: applyPostProcessing,
+-        trimSilence: trimSilence,
+-      });
+-    }
++    trimmedBuffer = await applyProcessingPipeline(trimmedBuffer, {
++      normalize: normalize,
++      compress: applyPostProcessing,
++      trimSilence: trimSilence,
++    });
+```
+
+That is the whole fix. The pipeline already gated each step on its own flag; only
+the outer `if` was wrong.
+
+`trimSilence` is still threaded through and is still false everywhere: its
+control is commented out in `MasterToolbar` and `DEFAULT_MASTER_DEFAULTS` sets it
+false. The operation stays broken and ticket 008 removes it. This fix is not what
+switches it back on.
+
+The trailing comment in `audio-processors.ts` — "Always limit the audio to
+prevent clipping, no reason not to" — now says what is true, because now it is
+true.
+
+### The four-row table, regenerated
+
+`clip-30s.wav`, whole file, WAV out, FNV-1a — the same hash and the same file the
+baselines used, so the rows compare directly.
+
+| Normalize | Post-processing | Bytes | Hash before | Hash after |
+|---|---|---|---|---|
+| No | No | 5760044 | `e57eea7d` | **`f80bd084`** |
+| No | Yes | 5760044 | `e57eea7d` | **`b9fe4d8c`** |
+| Yes | No | 5760044 | `d66014f4` | `d66014f4` |
+| Yes | Yes | 5760044 | `b696be4e` | `b696be4e` |
+
+**Four distinct hashes. No collisions.**
+
+Read the last two rows carefully: they are **byte-identical to the baseline**.
+Where normalize was on, the pipeline already ran and its output has not moved.
+Only the two broken rows changed, and both changed because work the user asked
+for now happens:
+
+- Row 1 gains the limiter.
+- Row 2 gains the limiter **and** the compressor.
+
+This is the change to exported bytes the ticket warned about, and it is confined
+to exports made with normalize off.
+
+### The cost, measured
+
+Standing rule 4 says Simple must not get slower, and the ticket said to measure.
+Three runs each, median kept, dev server, same machine as
+[the baselines](../baselines.md).
+
+| Measurement | File | Baseline | Now | Delta |
+|---|---|---|---|---|
+| Slice, switches off | `clip-30s.wav` | 192.3 | **242.6** | +50.3 |
+| Slice, switches off | `clip-30s.mp3` | 305.5 | **280.3** | −25.2 |
+| Slice, switches off | `track-5m.wav` | 2030.9 | **2238.8** | +207.9 |
+| Slice, switches off | `track-5m.mp3` | 2329.2 | **2729.8** | +400.6 |
+| Slice, normalize + post on | `clip-30s.wav` | 378.7 | **349.5** | −29.2 |
+| Slice, normalize + post on | `clip-30s.mp3` | 443.0 | **385.3** | −57.7 |
+| Slice, normalize + post on | `track-5m.wav` | 3779.2 | **3233.1** | −546.1 |
+| Slice, normalize + post on | `track-5m.mp3` | 3843.5 | **3632.9** | −210.6 |
+| Batch export, 10 × `clip-30s.wav` | | 2350 | **2777.1** | +427.1 |
+
+**The switches-off path is slower, and the added work is one limiter render.**
+Timed alone:
+
+| Limiter only | Median |
+|---|---|
+| `clip-30s.wav` | 66.9 ms |
+| `track-5m.wav` | 645.1 ms |
+
+66.9 ms accounts for the 30-second clip's +50.3 ms in full. The batch's +427 ms
+is ten clips' worth of the same pass.
+
+The processed path is **at or below** its baseline everywhere, and the MP3
+switches-off rows moved inside the baseline's own run-to-run spread — its
+`clip-30s.mp3` runs were 266.2, 305.5 and 330.5 ms.
+
+**This is not an engine regression.** The switches-off path now does work it
+always claimed to do and silently skipped. Ticket 008 collapses all of it into
+one graph with one render, so this cost goes away rather than being paid forever.
+
+### Acceptance
+
+Met. Four rows, four hashes, no two collide.

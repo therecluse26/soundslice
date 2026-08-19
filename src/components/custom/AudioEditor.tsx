@@ -12,8 +12,6 @@ import HoverPlugin from "wavesurfer.js/dist/plugins/hover";
 import RegionsPlugin, { Region } from "wavesurfer.js/dist/plugins/regions";
 import TimelinePlugin from "wavesurfer.js/dist/plugins/timeline";
 import ZoomPlugin from 'wavesurfer.js/dist/plugins/zoom';
-import resolveConfig from "tailwindcss/resolveConfig";
-import tailwindConfig from "../../../tailwind.config";
 import { Card, CardContent } from "../ui/card";
 import { Button } from "../ui/button";
 import {
@@ -30,6 +28,7 @@ import { Slider } from "../ui/slider";
 import { useEffectiveView } from "@/hooks/useEffectiveView";
 import { HiddenRegionsChip } from "./HiddenRegionsChip";
 import { countRender } from "@/lib/render-count";
+import { WAVEFORM_COLORS } from "@/lib/waveform-colors";
 
 /**
  * The lazy-load boundary for Advanced view.
@@ -75,8 +74,6 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   );
   const setTrackRegion = useAudioStore((state) => state.setTrackRegion);
 
-  const resolvedConfig = resolveConfig(tailwindConfig);
-  const { colors } = resolvedConfig.theme;
   const isMobile = useMediaQuery("(max-width: 800px)");
   const view = useEffectiveView();
 
@@ -114,16 +111,48 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     [regionsPlugin, hoverPlugin, timelinePlugin, zoomPlugin]
   );
 
+  // The blob URL this card hands to wavesurfer.
+  //
+  // A blob URL pins its blob in memory until it is revoked, so a card that never
+  // revokes holds its whole encoded file for the life of the page. A 45-minute
+  // WAV is about 476 MB. See ticket 015.
+  //
+  // Created **and** revoked inside one effect, deliberately. A `useMemo` plus a
+  // separate cleanup effect looks equivalent and is not: React StrictMode mounts
+  // an effect, tears it down, then mounts it again, so that cleanup revoked a
+  // URL the card was still using. Every waveform then stopped at "Preparing
+  // audio..." with ERR_FILE_NOT_FOUND. One effect owning both halves means the
+  // live URL is always the one the current effect created.
+  //
   // Keyed on the file, not the track. A region write gives a new track object,
   // and rebuilding this URL there would reload the whole waveform on every drag.
-  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  //
+  // The cost is one render with no URL. The card already shows "Preparing
+  // audio..." until wavesurfer reports ready, so nothing new appears on screen.
+  // wavesurfer treats a missing `url` as "nothing to load" and waits.
+  const [url, setUrl] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
 
   // Wavesurfer setup
   const { wavesurfer } = useWavesurfer({
     container: audioContainer,
     height: isMobile ? 80 : 100,
-    waveColor: theme === "dark" ? colors.gray[700] : colors.gray[400],
-    progressColor: theme === "dark" ? colors.red[500] : colors.red[500],
+    waveColor:
+      theme === "dark"
+        ? WAVEFORM_COLORS.waveDark
+        : WAVEFORM_COLORS.waveLight,
+    // Both branches were already the same colour. Kept as a branch because the
+    // theme is forced to dark today, and reviving light theme is its own
+    // decision — ticket 014 is only about bundle size.
+    progressColor:
+      theme === "dark"
+        ? WAVEFORM_COLORS.progress
+        : WAVEFORM_COLORS.progress,
     barWidth: isMobile ? 2 : 3,
     barGap: isMobile ? 1 : 2,
     barRadius: 10,
@@ -134,15 +163,6 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     minPxPerSec: 100,
     fillParent: true,
   });
-
-  // NOTE: this URL is never revoked, so every track holds its audio for the
-  // life of the page. Revoking it here was tried and reverted. React
-  // StrictMode mounts an effect, tears it down, and mounts it again, so the
-  // cleanup ran while the card was still alive and every waveform stopped at
-  // "Preparing audio..." with ERR_FILE_NOT_FOUND. A correct fix has to create
-  // and revoke the URL inside one effect, which means the first render has no
-  // URL to give wavesurfer. That is a change to how the card loads, not a
-  // change to the store, so it does not belong in this ticket.
 
   // Redraw the waveform when its container changes width.
   //

@@ -3,7 +3,7 @@
 **Type:** `wayfinder:task`
 **Status:** open
 **Assignee:** _unclaimed_
-**Blocked by:** [005 — Research LUFS per ITU-R BS.1770](./005-research-lufs-bs1770.md), [006 — Install Vitest](./006-install-vitest.md), [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md)
+**Blocked by:** [008 — Build the edit stack and rewrite the engine](./008-build-the-edit-stack.md) — was also [005](./005-research-lufs-bs1770.md) and [006](./006-install-vitest.md), both closed. Ticket 006 chose a plain `node` environment with no Web Audio, which is the shape this ticket's BS.1770 tests take.
 **Blocks:** _none_
 **Map:** [Simple view and Advanced view](../map.md)
 

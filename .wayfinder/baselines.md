@@ -324,3 +324,82 @@ Every median in this file, on this machine and this browser. The headline set:
 
 And one acceptance that is not a number: a 45-minute track must survive repeated
 export. Today it does not.
+
+---
+
+## Addendum — 2026-08-19: four tickets moved these numbers
+
+The tables above are still `main`'s numbers, measured at commit `e88e52e`. They
+are the record of what the engine did before this map touched it, and they are
+not rewritten. This addendum records what has moved since, so ticket 008 aims at
+the right target.
+
+Same machine, same browser, same files, same method: three runs, median kept, dev
+server for engine timings.
+
+### Slice timings, after [013](./tickets/013-post-processing-guard-defect.md)
+
+The `if (normalize)` guard is gone, so the pipeline — and therefore the limiter —
+now runs on every export. The switches-off path pays for one limiter render that
+it used to skip.
+
+| Measurement | File | Was | Now | Delta |
+|---|---|---|---|---|
+| Slice, switches off | `clip-30s.wav` | 192.3 | **242.6** | +50.3 |
+| Slice, switches off | `clip-30s.mp3` | 305.5 | **280.3** | −25.2 |
+| Slice, switches off | `track-5m.wav` | 2030.9 | **2238.8** | +207.9 |
+| Slice, switches off | `track-5m.mp3` | 2329.2 | **2729.8** | +400.6 |
+| Slice, normalize + post on | `clip-30s.wav` | 378.7 | **349.5** | −29.2 |
+| Slice, normalize + post on | `clip-30s.mp3` | 443.0 | **385.3** | −57.7 |
+| Slice, normalize + post on | `track-5m.wav` | 3779.2 | **3233.1** | −546.1 |
+| Slice, normalize + post on | `track-5m.mp3` | 3843.5 | **3632.9** | −210.6 |
+| Batch, 10 × `clip-30s.wav` | | 2350 | **2777.1** | +427.1 |
+
+A limiter pass timed alone, so the delta is attributable and not guessed:
+
+| Limiter only | Median |
+|---|---|
+| `clip-30s.wav` | 66.9 ms |
+| `track-5m.wav` | 645.1 ms |
+
+The processed path is at or below its old figure everywhere. The MP3
+switches-off rows moved inside the baseline's own spread — `clip-30s.mp3` ran
+266.2, 305.5 and 330.5 ms above.
+
+### Bundle size, after [014](./tickets/014-tailwind-config-in-simple-bundle.md)
+
+`AudioEditor` no longer resolves the Tailwind config at runtime.
+
+| Asset | Ticket 001 | Ticket 012 | Now |
+|---|---|---|---|
+| `index.*.js` raw | 499.27 KiB | 503.66 KiB | **442.01 KiB** |
+| `index.*.js` gzip | 153.72 KiB | 155.02 KiB | **136.62 KiB** |
+| `AdvancedPanel.*.js` gzip | — | 2.65 KiB | 2.65 KiB |
+| `index.*.css` gzip | 5.87 KiB | 6.02 KiB | 6.02 KiB |
+
+**Ticket 008 must beat 136.62 KiB gzip, not 153.72 KiB.** The old figure is now
+17 KiB of slack it does not deserve.
+
+### Memory, after [015](./tickets/015-release-track-audio.md)
+
+Finding 6 said `performance.memory` does not count audio. It still does not, so
+this is the Playwright Chromium tree's RSS from `/proc`, garbage collected through
+CDP before each reading.
+
+Ten `track-5m.wav` Files, 50.4 MB each, 503.9 MB total, held only by blob URLs:
+
+| State | Chromium RSS |
+|---|---|
+| Before | 1252.7 MB |
+| Ten blob URLs alive | 1525.6 MB |
+| The same ten revoked | 1019.7 MB |
+
+**A blob URL holds its file one for one.** A card now revokes on unmount, so a
+track that is loaded but idle no longer costs its encoded file forever.
+
+### Still unmeasured
+
+The 45-minute files were not re-run. Finding 1 stands: a 45-minute track survives
+one pass of each stage and dies on repetition. That is still ticket 008's hardest
+acceptance, and it is now slightly worse on the switches-off path, because that
+path does one more render than it did.
