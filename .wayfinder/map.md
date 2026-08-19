@@ -114,6 +114,14 @@ chips that can be reordered, with draggable crossfades between them.
   master settings, never a copy. The stored view is never rewritten by screen
   size. **Simple view exports only the region it draws** — this reverses the
   ticket's own pre-agreed answer, and ticket 012 is corrected to match.
+- [012 — View state, toggle and the lazy-load boundary](./tickets/012-view-state-and-toggle.md)
+  — **built.** Simple view and Advanced view both exist, with a toggle in the
+  header and a three-section Advanced panel shell, all closed. Verified in
+  Chromium: the waveform never moves on a switch, a Simple user downloads no
+  Advanced code, and the Advanced chunk arrives on demand at 2986 bytes. The
+  bundle acceptance failed as written — adding a control costs 0.93 KiB gzip —
+  but no Advanced code is in the Simple bundle. `ModeToggle` was deliberately
+  not wired: the theme is forced to dark, so it would do nothing.
 
 ## Not yet specified
 

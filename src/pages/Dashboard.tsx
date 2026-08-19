@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import MasterToolbar from "@/components/custom/MasterToolbar";
 import SineWaveLoader from "@/components/custom/SineWaveLoader";
+import { AdvancedSettingsChip } from "@/components/custom/AdvancedSettingsChip";
 
 export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(false);
@@ -45,6 +46,7 @@ export default function Dashboard() {
                 />
                 {tracks.current.length > 0 && (
                   <div>
+                    <AdvancedSettingsChip />
                     <MasterToolbar />
                     {tracks.current.map((track, index) => (
                       <div key={index} className={"my-4"}>

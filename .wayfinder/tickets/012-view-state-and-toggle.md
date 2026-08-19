@@ -1,8 +1,8 @@
 # 012 — View state, toggle and the lazy-load boundary
 
 **Type:** `wayfinder:task`
-**Status:** open
-**Assignee:** _unclaimed_
+**Status:** closed
+**Assignee:** agent session 2026-08-18 (view toggle)
 **Blocked by:** [003 — Design the view state model](./003-design-the-view-state-model.md)
 **Blocks:** _none_
 **Map:** [Simple view and Advanced view](../map.md)
@@ -66,3 +66,87 @@ The Simple view bundle is no larger than it is today. Measure it.
 
 Advanced view opens looking almost identical to Simple view, because every panel
 starts closed.
+
+---
+
+## Resolution — 2026-08-18
+
+Built and verified in Chromium on the production build. Simple view and Advanced
+view now exist, and a Simple user downloads none of Advanced.
+
+### What was built
+
+| File | What it is |
+|---|---|
+| `src/lib/view.ts` | the view vocabulary: `View`, the 800 px rule, `effectiveView` as a plain function |
+| `src/lib/persisted.ts` | namespaced, versioned `localStorage` helpers that swallow their errors |
+| `src/hooks/useEffectiveView.ts` | the view actually in force, subscribing to `view` alone |
+| `src/components/custom/ViewToggle.tsx` | the toggle; hidden below 800 px |
+| `src/components/custom/advanced/AdvancedPanel.tsx` | the lazy-loaded shell: Regions, Sound, Export |
+| `src/components/custom/AdvancedSettingsChip.tsx` | "N Advanced settings active" |
+| `src/components/custom/HiddenRegionsChip.tsx` | "N regions hidden — switch to Advanced to export them" |
+| `src/lib/advanced-settings.ts` | the counting rule from ticket 003, in code |
+
+`useMediaQuery` was fixed first, as this ticket requires. It now reads the query
+on the first render, and listens to the media query instead of window `resize`.
+
+### Verified, not assumed
+
+| Acceptance | Result |
+|---|---|
+| The waveform does not move when the view changes | **pass** — `top` 407 px in Advanced, Simple, and Advanced again |
+| Advanced opens looking almost identical to Simple | **pass** — three sections, zero open |
+| A Simple user downloads no Advanced code | **pass** — only `index.js`; `AdvancedPanel` chunk absent |
+| Advanced code loads on demand | **pass** — `AdvancedPanel.js`, 2986 bytes transferred, on first switch |
+| The view choice persists | **pass** — `soundslice:view` = `{"v":1,"value":"advanced"}`, survives reload |
+| Below 800 px the toggle hides and the view is Simple | **pass** at 700 px — and the stored view stayed `advanced` |
+| The Simple view bundle is no larger than today | **fail as written** — see below |
+
+### A layout defect found and fixed during verification
+
+The first build moved the waveform 8 px when the view changed. The cause was
+mine: a wrapper `<div className="mb-2">` rendered in Simple view even when the
+chip inside returned `null`, so an empty element with a margin held space.
+
+Both chips now own their view check **and** their spacing. Nothing takes up room
+when there is nothing to say.
+
+### The bundle acceptance cannot be met as written
+
+| Asset | Baseline | Now | Change |
+|---|---|---|---|
+| `index.js` raw | 499.27 KiB | 502.49 KiB | +3.22 KiB |
+| `index.js` gzip | 153.72 KiB | 154.65 KiB | **+0.93 KiB** |
+| `index.css` gzip | 5.87 KiB | 6.02 KiB | +0.15 KiB |
+| `AdvancedPanel.js` gzip | — | 2.62 KiB | new, not downloaded by Simple |
+
+Adding a control to Simple view necessarily adds bytes to the Simple bundle. The
+acceptance as written is unreachable for any version of this ticket.
+
+The **intent** is met, and it was proven: no Advanced component code is in the
+Simple bundle. `Accordion` appears 16 times in the Advanced chunk and **zero**
+times in the main one.
+
+### The offset available
+
+`AudioEditor` imports the whole Tailwind config and calls `resolveConfig` at
+runtime, to read four colour values. That puts the entire default palette in the
+Simple path — `cyan`, `rose`, `lime`, `fuchsia` and `emerald` are all in there,
+unused. Raised as
+[014 — The whole Tailwind config ships in the Simple bundle](./014-tailwind-config-in-simple-bundle.md).
+Taking it would repay this ticket's growth several times over.
+
+### One step deliberately not done
+
+Step 3 said to place `ViewToggle` and the existing `ModeToggle` together. **Only
+`ViewToggle` was added.**
+
+`ModeToggle` is currently imported nowhere. The theme is forced to dark:
+`ThemeProvider` runs `root.classList.add("dark")` unconditionally at
+`src/contexts/ThemeContext.tsx:34`, ignoring the stored theme. `ModeToggle` also
+writes `localStorage.theme` while the provider reads `shadcn-ui-theme`, so the
+two never meet.
+
+Wiring it in would put a button in the header that does nothing. Commit `8b2a4f9`
+removed light theme on purpose, so reviving it is a decision, not a side effect
+of this ticket.

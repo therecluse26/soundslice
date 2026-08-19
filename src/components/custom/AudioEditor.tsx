@@ -4,6 +4,8 @@ import React, {
   useRef,
   useEffect,
   useState,
+  lazy,
+  Suspense,
 } from "react";
 import { useWavesurfer } from "@wavesurfer/react";
 import HoverPlugin from "wavesurfer.js/dist/plugins/hover";
@@ -25,6 +27,16 @@ import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import { AudioService } from "@/lib/audio-service";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { Slider } from "../ui/slider";
+import { useEffectiveView } from "@/hooks/useEffectiveView";
+import { HiddenRegionsChip } from "./HiddenRegionsChip";
+
+/**
+ * The lazy-load boundary for Advanced view.
+ *
+ * A dynamic import, so Vite emits a separate chunk. A Simple view user never
+ * downloads it. Keep every Advanced-only module behind this import.
+ */
+const AdvancedPanel = lazy(() => import("./advanced/AdvancedPanel"));
 
 // Interfaces
 interface EditorProps {
@@ -55,6 +67,7 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
   const resolvedConfig = resolveConfig(tailwindConfig);
   const { colors } = resolvedConfig.theme;
   const isMobile = useMediaQuery("(max-width: 800px)");
+  const view = useEffectiveView();
 
   // Refs
   const audioContainer = useRef<HTMLDivElement | null>(null);
@@ -313,7 +326,7 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
               <div className={isMobile ? "text-sm" : ""}>
                 Selection duration: <code>{formatTime(selectionDuration)}</code>
               </div>
-             
+              <HiddenRegionsChip track={track} />
             </div>
             <div className="flex gap-2 items-center w-[300px]">
                 Zoom:
@@ -362,6 +375,25 @@ export const AudioEditor = React.memo(({ track }: EditorProps) => {
                 </Button>
               )}
             </div>
+          </div>
+        )}
+
+        {/*
+          The Advanced panel sits below the waveform and the controls, so
+          switching view never moves the waveform. That is this ticket's
+          acceptance: the thing the user is looking at stays where it is.
+        */}
+        {ready && view === "advanced" && (
+          <div className="mt-2 border-t pt-1">
+            <Suspense
+              fallback={
+                <p className="py-4 text-xs text-muted-foreground">
+                  Loading advanced controls…
+                </p>
+              }
+            >
+              <AdvancedPanel />
+            </Suspense>
           </div>
         )}
       </CardContent>

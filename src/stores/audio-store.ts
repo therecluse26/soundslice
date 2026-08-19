@@ -2,6 +2,14 @@ import { Region } from "wavesurfer.js/dist/plugins/regions";
 import { create } from "zustand";
 import { OutputFormat } from "@/lib/audio-service";
 import { MutableRefObject } from "react";
+import { readPersisted, writePersisted } from "@/lib/persisted";
+import {
+  DEFAULT_VIEW,
+  View,
+  VIEW_STORAGE_KEY,
+  VIEW_STORAGE_VERSION,
+  isView,
+} from "@/lib/view";
 
 export type EditorTrack = {
   file: File;
@@ -33,6 +41,16 @@ interface AudioState {
 
   processingLoading: boolean;
   setProcessingLoading: (loading: boolean) => void;
+
+  /**
+   * Which set of controls is on screen. Real reactive state, not a ref, so a
+   * component can subscribe to it alone.
+   *
+   * This is the *stored* view. What the user actually gets is the effective
+   * view, which is Simple below 800 px. See `useEffectiveView`.
+   */
+  view: View;
+  setView: (view: View) => void;
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
@@ -89,4 +107,13 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   setProcessingLoading: (loading: boolean) =>
     set({ processingLoading: loading }),
+
+  view:
+    readPersisted(VIEW_STORAGE_KEY, VIEW_STORAGE_VERSION, isView) ??
+    DEFAULT_VIEW,
+
+  setView: (view: View) => {
+    writePersisted(VIEW_STORAGE_KEY, VIEW_STORAGE_VERSION, view);
+    set({ view });
+  },
 }));
