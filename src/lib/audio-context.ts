@@ -44,3 +44,22 @@ export function closeSharedAudioContext(): void {
   void live?.close();
   live = null;
 }
+
+/**
+ * A handle on the live context, for measuring preview from outside the app.
+ *
+ * **Development builds only.** `import.meta.env.DEV` is a compile-time constant,
+ * so this whole block is removed from the production bundle rather than merely
+ * skipped. The bench harness sets `window.__bench` the same way.
+ *
+ * Ticket 019 needed it: preview plays through this context, and proving that
+ * what you hear matches what you export means tapping it with an `AnalyserNode`.
+ * There is no other way in from a test.
+ */
+// `typeof window` as well as the DEV flag. Vitest runs in plain `node` with DEV
+// true and no `window` at all — that is ticket 006's rule, and this file is
+// reached from `preview.ts`, which has tests.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__previewContext =
+    sharedAudioContext;
+}

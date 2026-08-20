@@ -329,6 +329,47 @@ chips that can be reordered, with draggable crossfades between them.
   KiB gzip**, with 258 KiB of mediabunny arriving only for FLAC and Opus.
   `pnpm test` 125 → 165.
 
+- [019 — Wire preview onto the edit stack](./tickets/019-wire-preview-onto-the-edit-stack.md)
+  — **built. The play button plays the region through the stack.** wavesurfer's
+  own `<audio>` element feeds the graph through `createMediaElementSource`, so
+  **no decoded buffer is held** and the 1 GB ceiling never bites — the deciding
+  argument against a second `AudioBufferSourceNode`, which would have cost 1.04 GB
+  on a 45-minute track. wavesurfer keeps the playhead, the seeking and the
+  region-out handling. `buildGraph` was split so **`linkStack` and
+  `scheduleRegionEnvelope` are each one implementation that both paths call** —
+  ADR 0001 held to properly rather than nominally. Loudness and peak
+  normalization **measure on demand up to ten minutes**, cached on file, region,
+  stack and rate, and an export fills the same cache; above ten minutes preview
+  says the level is not normalized and offers **Measure anyway**, because the
+  wait is 23 seconds on a 45-minute track. The **Preview effects** switch is per
+  track, in **both views**, and is deliberately not counted on the chip — it
+  changes no exported file. Verified by measurement, not by ear: preview applies
+  **+9.34 dB** where the export applies **+9.40 dB**, 0.06 dB apart. Two defects
+  found by testing and fixed: a routing failure **blanked the whole card**, and a
+  dev-only handle broke the node test environment. One finding raised rather than
+  fixed: the card has always redrawn ~60 times a second while playing, and
+  preview adds none of it — now ticket 020. Simple bundle 113.34 → **115.40 KiB
+  gzip**. `pnpm test` 165 → 186.
+
+- [020 — The track card redraws on every timeupdate](./tickets/020-card-redraws-on-timeupdate.md)
+  — **built. A playing card renders zero times**, against 382 in three seconds.
+  `@wavesurfer/react` kept `currentTime` in React state and set it on every
+  `timeupdate`; the card read none of it. The dependency is **deleted** and
+  replaced by `useWavesurferInstance`, which is the half the library does not
+  export — same creation logic, same flattened dependency array, none of the
+  state. The card's `wavesurfer.unAll()` cleanup is gone too: it removed **every**
+  listener on the instance including preview's two, and it never removed the
+  regions plugin's, so a second `ready` stacked another pair. Every listener is
+  now collected and removed by name. Verified: 2 wavesurfer instances created and
+  still 2 after playback, two seeks, a resize and six toggles; preview schedules
+  its envelope at position 0 on play and at **5** and **21** for seeks to 6 s and
+  22 s of a region starting at 1 s; a resize still gives `region-updated: 1` and
+  6 renders; and the stack still applies **+9.34 dB**, ticket 019's figure to the
+  last digit. Simple bundle 115.40 → **114.35 KiB gzip**, by deleting a
+  dependency rather than adding one. Found and left alone: the
+  `region-out → region.play()` handler reads as a loop and is not one, and never
+  was.
+
 ## Not yet specified
 
 - Advanced panel layout for the Regions, Sound and Export sections

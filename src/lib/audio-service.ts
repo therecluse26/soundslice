@@ -19,7 +19,12 @@
 
 import type { EditorTrack } from "@/stores/audio-store";
 import { AudioLoader } from "./audio-loader";
-import { renderRegion } from "./render";
+import { measureStack, renderRegion } from "./render";
+import {
+  measurementKey,
+  recallMeasurement,
+  rememberMeasurement,
+} from "./preview-measurements";
 import { encode } from "./encoder";
 import {
   BitDepth,
@@ -29,7 +34,7 @@ import {
   exportSampleRate,
 } from "./output-format";
 import { outputFileName, uniqueFileName } from "./file-names";
-import { EditStack, simpleStack } from "./edit-stack";
+import { EditStack, needsMeasurement, simpleStack } from "./edit-stack";
 
 export { OutputFormat };
 
@@ -151,6 +156,46 @@ export class AudioService {
   }
 
   /**
+   * The gains this track's stack resolves to, measured if nobody has yet.
+   *
+   * Preview's entry point. It decodes, runs the measuring passes, and **drops
+   * the buffer** — only the numbers are kept. That is the worker boundary
+   * design's section 6 held to: a decoded 45-minute track is 1.04 GB, and
+   * holding one is the difference between a tab that survives and a tab that
+   * dies.
+   *
+   * A stack with nothing to measure returns an empty map at once and costs
+   * nothing, so a caller need not check first.
+   *
+   * The rate is the **export** rate, not the file's own. Preview plays the media
+   * element at whatever rate the file is, but the gain it applies has to be the
+   * gain the export would apply, or the two disagree about level — which is the
+   * one thing ADR 0001 exists to stop.
+   */
+  static async measureFor(
+    track: EditorTrack,
+    settings: ExportSettings
+  ): Promise<ReadonlyMap<number, number>> {
+    if (!track.region) return new Map();
+
+    const stack = this.stackFor(track, settings);
+    if (!stack.some((operation) => needsMeasurement(operation))) return new Map();
+
+    const fileRate = await AudioLoader.sampleRateOf(track.file);
+    const rate = this.exportSampleRate(fileRate, settings);
+    const key = measurementKey(track.file.name, track.region, stack, rate);
+
+    const known = recallMeasurement(key);
+    if (known) return known;
+
+    const source = await AudioLoader.loadAudioFile(track.file, () => rate);
+    const measured = await measureStack(source, track.region, stack);
+
+    rememberMeasurement(key, measured);
+    return measured;
+  }
+
+  /**
    * Renders one track's region through its stack and encodes it.
    *
    * Returns `null` when the track has no region, or when the export was
@@ -179,15 +224,26 @@ export class AudioService {
       this.exportSampleRate(fileRate, settings)
     );
 
-    const rendered = await renderRegion(
-      source,
-      track.region,
-      this.stackFor(track, settings),
-      {
-        onProgress: (fraction) => report("render", fraction),
-        isCancelled: options.isCancelled,
-      }
-    );
+    const stack = this.stackFor(track, settings);
+    const region = track.region;
+
+    const rendered = await renderRegion(source, region, stack, {
+      onProgress: (fraction) => report("render", fraction),
+      isCancelled: options.isCancelled,
+      // An export is the most expensive way to learn these gains, and it has
+      // just paid for them. Preview reads the same numbers, so the next press of
+      // play is instant and hears exactly what was sliced.
+      onMeasured: (measured) =>
+        rememberMeasurement(
+          measurementKey(
+            track.file.name,
+            region,
+            stack,
+            source.sampleRate
+          ),
+          measured
+        ),
+    });
 
     // `rendered` is fresh and nothing else holds it, so its channels are
     // transferred rather than copied. Transferring detaches the whole

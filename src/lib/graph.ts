@@ -102,6 +102,37 @@ export type BuiltGraph = {
 type Segment = { input: AudioNode; output: AudioNode };
 
 /**
+ * Connects the stack after `from`, and returns the new tail.
+ *
+ * **This is the one implementation of the operations chain, and both paths call
+ * it.** Export reaches it through `buildGraph` with an `AudioBufferSourceNode`
+ * in front; preview reaches it directly with a `MediaElementAudioSourceNode` in
+ * front. What differs between them is where the samples come from. What must
+ * never differ is what happens to those samples, and that is this function.
+ *
+ * That is [ADR 0001](../../docs/adr/0001-one-graph-two-contexts.md) held to
+ * properly. A second copy of this loop for preview would satisfy the letter of
+ * the ADR and break its point.
+ */
+export function linkStack(
+  context: BaseAudioContext,
+  from: AudioNode,
+  plan: Pick<GraphPlan, "stack" | "measured" | "upTo">
+): AudioNode {
+  const upTo = plan.upTo ?? plan.stack.length;
+  let tail = from;
+
+  for (let index = 0; index < upTo; index++) {
+    tail = link(
+      tail,
+      operationSegment(context, plan.stack[index], index, plan.measured)
+    );
+  }
+
+  return tail;
+}
+
+/**
  * Builds the region cut, the region's own properties, then the track's stack.
  *
  * Order is fixed and it is not the canonical order's business:
@@ -119,9 +150,8 @@ export function buildGraph(
   context: BaseAudioContext,
   plan: GraphPlan
 ): BuiltGraph {
-  const { source: buffer, region, stack } = plan;
+  const { source: buffer, region } = plan;
   const startTime = plan.startTime ?? 0;
-  const upTo = plan.upTo ?? stack.length;
 
   const start = Math.max(0, Math.min(region.start, buffer.duration));
   const end = Math.max(start, Math.min(region.end, buffer.duration));
@@ -130,17 +160,12 @@ export function buildGraph(
   const source = context.createBufferSource();
   source.buffer = buffer;
 
-  let tail: AudioNode = source;
-
   // The region's own gain and its fade edges, in one node. Two gain nodes in
   // series would be identical and cost a node; one envelope carries both.
-  tail = link(tail, one(regionGainNode(context, region, durationSec, startTime)));
+  const envelope = regionGainNode(context, region, durationSec, startTime);
+  source.connect(envelope);
 
-  for (let index = 0; index < upTo; index++) {
-    tail = link(tail, operationSegment(context, stack[index], index, plan));
-  }
-
-  return { source, tail, durationSec };
+  return { source, tail: linkStack(context, envelope, plan), durationSec };
 }
 
 function one(node: AudioNode): Segment {
@@ -167,6 +192,32 @@ function regionGainNode(
   startTime: number
 ): GainNode {
   const node = context.createGain();
+  scheduleRegionEnvelope(node.gain, region, durationSec, 0, startTime);
+  return node;
+}
+
+/**
+ * Writes the region's gain and fade edges onto an `AudioParam`.
+ *
+ * **Both paths call this, so a fade cannot be one shape on export and another
+ * in preview.** Export always calls it with `positionSec` of 0, because a render
+ * starts at the region's start and cannot start anywhere else.
+ *
+ * Preview calls it again on every play and every seek, with the position the
+ * user landed on. Seeking into the middle of a fade is a real case — someone
+ * clicks near the end of a region to hear how it lands — and the envelope has to
+ * pick up where it would already have been, not start over. `envelopeAt` is
+ * what makes that exact rather than approximate.
+ */
+export function scheduleRegionEnvelope(
+  gain: AudioParam,
+  region: Region,
+  durationSec: number,
+  /** Seconds into the region that playback is starting from. */
+  positionSec: number,
+  /** Context time that position is heard at. */
+  startTime: number
+): void {
   const level = dbToGain(region.gainDb);
   const { fadeInEnd, fadeOutStart } = fadeTimes(
     durationSec,
@@ -174,28 +225,50 @@ function regionGainNode(
     region.fade.outMs
   );
 
-  const gain = node.gain;
+  const at = Math.max(0, Math.min(positionSec, durationSec));
 
-  if (fadeInEnd > 0) {
-    gain.setValueAtTime(0, startTime);
-    gain.linearRampToValueAtTime(level, startTime + fadeInEnd);
-  } else {
-    gain.setValueAtTime(level, startTime);
+  gain.cancelScheduledValues(startTime);
+  gain.setValueAtTime(
+    envelopeAt(at, level, fadeInEnd, fadeOutStart, durationSec),
+    startTime
+  );
+
+  // Still inside the fade in: ramp to full over what is left of it.
+  if (at < fadeInEnd) {
+    gain.linearRampToValueAtTime(level, startTime + (fadeInEnd - at));
   }
 
   if (fadeOutStart < durationSec) {
-    gain.setValueAtTime(level, startTime + fadeOutStart);
-    gain.linearRampToValueAtTime(0, startTime + durationSec);
+    // Hold full until the fade out is due, then ramp to silence at the end.
+    if (at < fadeOutStart) {
+      gain.setValueAtTime(level, startTime + (fadeOutStart - at));
+    }
+    gain.linearRampToValueAtTime(0, startTime + (durationSec - at));
+  }
+}
+
+/** The envelope's value at one moment, so a seek can resume from it. */
+function envelopeAt(
+  at: number,
+  level: number,
+  fadeInEnd: number,
+  fadeOutStart: number,
+  durationSec: number
+): number {
+  if (fadeInEnd > 0 && at < fadeInEnd) return level * (at / fadeInEnd);
+
+  if (fadeOutStart < durationSec && at > fadeOutStart) {
+    return level * Math.max(0, (durationSec - at) / (durationSec - fadeOutStart));
   }
 
-  return node;
+  return level;
 }
 
 function operationSegment(
   context: BaseAudioContext,
   operation: Operation,
   index: number,
-  plan: GraphPlan
+  measured: ReadonlyMap<number, number> | undefined
 ): Segment {
   switch (operation.op) {
     case "eq":
@@ -230,7 +303,7 @@ function operationSegment(
     case "peakNormalization":
     case "loudness": {
       const node = context.createGain();
-      node.gain.value = measuredGain(operation, index, plan);
+      node.gain.value = measuredGain(operation, index, measured);
       return one(node);
     }
 
@@ -253,9 +326,9 @@ function operationSegment(
 function measuredGain(
   operation: Operation,
   index: number,
-  plan: GraphPlan
+  measured: ReadonlyMap<number, number> | undefined
 ): number {
-  const gain = plan.measured?.get(index);
+  const gain = measured?.get(index);
 
   if (gain === undefined) {
     throw new Error(

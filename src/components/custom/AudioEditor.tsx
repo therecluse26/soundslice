@@ -7,7 +7,7 @@ import React, {
   lazy,
   Suspense,
 } from "react";
-import { useWavesurfer } from "@wavesurfer/react";
+import { useWavesurferInstance } from "@/hooks/useWavesurferInstance";
 import HoverPlugin from "wavesurfer.js/dist/plugins/hover";
 import RegionsPlugin, { Region } from "wavesurfer.js/dist/plugins/regions";
 import TimelinePlugin from "wavesurfer.js/dist/plugins/timeline";
@@ -28,6 +28,8 @@ import { useMediaQuery } from "@/lib/use-media-query";
 import { Slider } from "../ui/slider";
 import { useEffectiveView } from "@/hooks/useEffectiveView";
 import { HiddenRegionsChip } from "./HiddenRegionsChip";
+import { PreviewEffects } from "./PreviewEffects";
+import { usePreview } from "@/hooks/usePreview";
 import { countRender } from "@/lib/render-count";
 import { WAVEFORM_COLORS } from "@/lib/waveform-colors";
 
@@ -144,9 +146,13 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     return () => URL.revokeObjectURL(objectUrl);
   }, [file]);
 
-  // Wavesurfer setup
-  const { wavesurfer } = useWavesurfer({
-    container: audioContainer,
+  // Wavesurfer setup.
+  //
+  // `useWavesurferInstance`, not `@wavesurfer/react`'s `useWavesurfer`. That one
+  // also keeps `currentTime` in React state and updates it on every
+  // `timeupdate`, which redrew this whole card about sixty times a second for a
+  // value it never reads. Ticket 020. The playhead lives in `currentTimeRef`.
+  const wavesurfer = useWavesurferInstance(audioContainer, {
     height: isMobile ? 80 : 100,
     waveColor:
       theme === "dark"
@@ -169,6 +175,11 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     minPxPerSec: 100,
     fillParent: true,
   });
+
+  // Routes wavesurfer's own `<audio>` element through this track's edit stack,
+  // so the play button plays the region the way it will export. wavesurfer keeps
+  // the playhead, the seeking and the region-out handling.
+  const preview = usePreview(wavesurfer, track);
 
   // Redraw the waveform when its container changes width.
   //
@@ -259,68 +270,91 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   useEffect(() => {
     if (!wavesurfer) return;
 
-    wavesurfer.on("play", () => {
-      isPlaying.current = true;
-      regionsPlugin.getRegions()[0].play();
-    });
+    /**
+     * Every listener this effect adds, so the cleanup can remove exactly those.
+     *
+     * It used to call `wavesurfer.unAll()`, which removes **every** listener on
+     * the instance — including the two `usePreview` registers for the region
+     * envelope. Nothing warned, and preview would simply stop applying its fades
+     * until something else made it re-register. Ticket 020's "watch for".
+     */
+    const off: Array<() => void> = [];
 
-    wavesurfer.on("timeupdate", (currentTime) => {
-      currentTimeRef.current = currentTime;
-    });
+    off.push(
+      wavesurfer.on("play", () => {
+        isPlaying.current = true;
+        regionsPlugin.getRegions()[0].play();
+      })
+    );
 
-    wavesurfer.on("click", (location) => {
-      const region = regionsPlugin.getRegions()[0];
-      const start = region.start / wavesurfer.getDuration();
-      const end = region.end / wavesurfer.getDuration();
+    off.push(
+      wavesurfer.on("timeupdate", (currentTime) => {
+        currentTimeRef.current = currentTime;
+      })
+    );
 
-      if (location < start || location > end) {
-        region.play();
-      }
-    });
+    off.push(
+      wavesurfer.on("click", (location) => {
+        const region = regionsPlugin.getRegions()[0];
+        const start = region.start / wavesurfer.getDuration();
+        const end = region.end / wavesurfer.getDuration();
 
-    wavesurfer.on("pause", () => {
-      isPlaying.current = false;
-    });
+        if (location < start || location > end) {
+          region.play();
+        }
+      })
+    );
 
-    wavesurfer.on("ready", () => {
-      setReady(true);
+    off.push(
+      wavesurfer.on("pause", () => {
+        isPlaying.current = false;
+      })
+    );
 
-      // Restore the region this track already has, and only fall back to the
-      // default when it has none.
-      //
-      // This card used to add `DEFAULT_REGION` every time it mounted, and then
-      // write it to the store. So the store's region was written by the card and
-      // never read back, and any remount silently reset the user's selection.
-      // See `.wayfinder/tickets/017-restore-stored-region.md`.
-      //
-      // Read through `getState`, not the `track` selector above. This runs in an
-      // event handler, so it must not make this effect depend on a value that
-      // changes on every drag.
-      const stored = useAudioStore.getState().getTrack(file.name)?.region;
+    off.push(
+      wavesurfer.on("ready", () => {
+        setReady(true);
 
-      const newRegion = regionsPlugin.addRegion({
-        start: stored?.start ?? DEFAULT_REGION.start,
-        end: stored?.end ?? DEFAULT_REGION.end,
-        content: "Clip",
-        color: "rgba(254, 242, 242, 0.25)",
-        minLength: 5,
-      });
+        // Restore the region this track already has, and only fall back to the
+        // default when it has none.
+        //
+        // This card used to add `DEFAULT_REGION` every time it mounted, and then
+        // write it to the store. So the store's region was written by the card
+        // and never read back, and any remount silently reset the user's
+        // selection. See `.wayfinder/tickets/017-restore-stored-region.md`.
+        //
+        // Read through `getState`, not the `track` selector above. This runs in
+        // an event handler, so it must not make this effect depend on a value
+        // that changes on every drag.
+        const stored = useAudioStore.getState().getTrack(file.name)?.region;
 
-      handleZoom([0])
+        const newRegion = regionsPlugin.addRegion({
+          start: stored?.start ?? DEFAULT_REGION.start,
+          end: stored?.end ?? DEFAULT_REGION.end,
+          content: "Clip",
+          color: "rgba(254, 242, 242, 0.25)",
+          minLength: 5,
+        });
 
-      // Necessary to set region to trim if region is not changed
-      onUpdatedRegion(newRegion);
+        handleZoom([0]);
 
-      regionsPlugin.on("region-updated", onUpdatedRegion);
+        // Necessary to set region to trim if region is not changed
+        onUpdatedRegion(newRegion);
 
-      regionsPlugin.on("region-out", (region) => {
-        region.play();
-      });
-    });
+        // Collected too. These are on the plugin, not on wavesurfer, so the old
+        // `unAll()` never removed them and a second `ready` stacked another
+        // pair on top.
+        off.push(regionsPlugin.on("region-updated", onUpdatedRegion));
 
-    return () => {
-      wavesurfer.unAll();
-    };
+        off.push(
+          regionsPlugin.on("region-out", (region) => {
+            region.play();
+          })
+        );
+      })
+    );
+
+    return () => off.forEach((unsubscribe) => unsubscribe());
   }, [wavesurfer, regionsPlugin, onUpdatedRegion, file.name]);
 
   // Add zoom handler
@@ -402,6 +436,18 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                 Selection duration: <code>{formatTime(selectionDuration)}</code>
               </div>
               {track && <HiddenRegionsChip track={track} />}
+              {/*
+                In both views, deliberately. It changes no exported file, and a
+                Simple user who cannot hear the raw cut cannot tell what the two
+                switches did. Ticket 019 records the reasoning.
+              */}
+              <div className="mt-2">
+                <PreviewEffects
+                  fileName={file.name}
+                  effects={track?.previewEffects ?? true}
+                  preview={preview}
+                />
+              </div>
             </div>
             <div className="flex gap-2 items-center w-[300px]">
                 Zoom:

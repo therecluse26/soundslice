@@ -55,6 +55,16 @@ export type RenderOptions = {
    * the screen is always right — the trade the design accepts.
    */
   isCancelled?: () => boolean;
+
+  /**
+   * Called with the gains this render measured, before the final pass.
+   *
+   * Preview needs the same numbers export used, or the two disagree about level.
+   * An export is the most expensive way to learn them and it happens anyway, so
+   * the caller hands them to `preview-measurements.ts` and the next press of
+   * play is instant.
+   */
+  onMeasured?: (measured: ReadonlyMap<number, number>) => void;
 };
 
 /**
@@ -99,6 +109,8 @@ export async function renderRegion(
     ...options,
     onPassProgress: passProgress,
   });
+
+  options.onMeasured?.(measured);
 
   return renderPass(
     source,

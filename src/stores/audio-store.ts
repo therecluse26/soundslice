@@ -53,6 +53,19 @@ export type EditorTrack = {
    * own once Advanced view can give it one.
    */
   stack?: EditStack;
+
+  /**
+   * The **Preview effects** switch for this track. On unless it says otherwise.
+   *
+   * Per track, because you judge it while listening to one track. Not persisted,
+   * because it belongs to a file the browser cannot re-open — the same rule
+   * regions follow.
+   *
+   * It never changes an exported file, so it is **not** counted on the Advanced
+   * settings chip. The chip warns that an export is not what Simple view
+   * describes, and this never is.
+   */
+  previewEffects?: boolean;
 };
 
 interface AudioState {
@@ -97,6 +110,9 @@ interface AudioState {
     fileName: string,
     bounds: { start: number; end: number }
   ) => void;
+
+  /** Turns this track's **Preview effects** switch on or off. */
+  setTrackPreviewEffects: (fileName: string, effects: boolean) => void;
 
   /**
    * Why the last drop was refused, or `null`.
@@ -270,6 +286,14 @@ export const useAudioStore = create<AudioState>((set, get) => {
                   : defaultRegion(bounds.start, bounds.end),
               }
             : track
+        ),
+      });
+    },
+
+    setTrackPreviewEffects: (fileName: string, previewEffects: boolean) => {
+      set({
+        tracks: get().tracks.map((track) =>
+          track.file.name === fileName ? { ...track, previewEffects } : track
         ),
       });
     },

@@ -729,3 +729,150 @@ inside the worker: the string `Matroska` is absent from the Simple bundle, the
 Advanced chunk and the encode worker alike.
 
 `pnpm test` is 125 → **165 tests**.
+
+---
+
+## Addendum — 2026-08-19: preview
+
+[019 — Wire preview onto the edit stack](./tickets/019-wire-preview-onto-the-edit-stack.md)
+made the play button play the region through the edit stack.
+
+### What preview costs in memory: nothing
+
+wavesurfer's own `<audio>` element feeds the graph, so preview holds **no decoded
+buffer at all**. The alternative — a second `AudioBufferSourceNode` sharing the
+export's samples — was measured and rejected:
+
+| Track | Decoded stereo buffer it would have held |
+|---|---|
+| 30 seconds | 10.6 MB |
+| 5 minutes | 105.8 MB |
+| 45 minutes | **952.6 MB** |
+
+Against a 1 GB ceiling that already counts every loaded file. Nothing is held.
+
+### What a measurement costs in time
+
+Loudness and peak normalization need a decode and the measuring render passes
+before preview can apply them:
+
+| Track | Wait before first sound |
+|---|---|
+| 30 seconds | ~0.15 s |
+| 5 minutes | ~2.3 s |
+| 10 minutes | ~5 s |
+| 45 minutes | ~23 s |
+
+**Ten minutes is the limit.** Above it preview plays at once, says the level is
+not the export's, and offers **Measure anyway**. The measurement is cached on
+file name, region bounds, stack and sample rate, and an export fills the same
+cache — so the first play after a slice is instant.
+
+### The acceptance, measured rather than heard
+
+An `AnalyserNode` was patched onto everything connecting to the speakers.
+`clip-30s.wav`, region 1–30 s, **Normalize Levels: Yes** at −14 LUFS.
+
+The analyser reads a mono downmix, so it under-reads a stereo peak by a fixed
+amount. **The bias cancels in a ratio**, so what is compared is the gain each path
+applied:
+
+| | Preview, analyser | Export, ffmpeg |
+|---|---|---|
+| Stack bypassed | peak −13.19 dBFS, RMS −32.69 | raw region peak −10.4 dB, mean −29.8 |
+| Stack applied | peak −3.85 dBFS, RMS −23.16 | peak −1.0 dB, mean −20.5 |
+| **Gain applied, peak** | **+9.34 dB** | **+9.40 dB** |
+| **Gain applied, RMS** | **+9.53 dB** | **+9.30 dB** |
+
+**0.06 dB apart on peak.** The export's true peak reads −1.0 dBFS, the −1 dBTP
+ceiling landing exactly where it should. The RMS pair differs by 0.23 dB because
+the limiter is doing work at the higher level and not at the lower one, which is
+the point of a limiter.
+
+### A redraw storm that is not preview's
+
+Found while proving the above, and raised as
+[020 — The track card redraws on every timeupdate](./tickets/020-card-redraws-on-timeupdate.md).
+`clip-30s.wav`, three seconds of playback:
+
+| | Renders in 3 s |
+|---|---|
+| preview enabled | **172** |
+| preview disabled | **382** |
+
+`@wavesurfer/react`'s `useWavesurfer` calls `setCurrentTime` on every
+`timeupdate`. The card reads none of that state. **Preview adds no renders**, and
+this has always been here.
+
+### Bundle
+
+| Asset | After 010 | After 011 | **After 019** |
+|---|---|---|---|
+| `index.*.js` gzip | 113.02 KiB | 113.34 KiB | **115.40 KiB** |
+| `AdvancedPanel.*.js` gzip | 3.00 KiB | 3.64 KiB | 3.64 KiB |
+| `encode-worker.*.js` raw | 78.87 KiB | 80.84 KiB | 80.84 KiB |
+
+**+2.06 KiB** for the preview graph, its hook, the switch and Radix's `Switch`.
+It is in the Simple bundle deliberately: the switch appears in both views.
+
+`pnpm test` is 165 → **186 tests**.
+
+---
+
+## Addendum — 2026-08-19: the card's redraws
+
+[020 — The track card redraws on every timeupdate](./tickets/020-card-redraws-on-timeupdate.md)
+removed `@wavesurfer/react` and the render storm it caused.
+
+### Renders during playback
+
+`clip-30s.wav`, region 1–30 s, counted with `countRender`, sound confirmed
+present throughout by an `AnalyserNode` on the destination:
+
+| | Renders |
+|---|---|
+| before, 3 seconds of playback | **382** |
+| after, 27.5 seconds of playback | **0** |
+
+About 127 renders a second, to none. `@wavesurfer/react`'s `useWavesurfer` calls
+`setCurrentTime` on every `timeupdate`; the card reads the playhead from its own
+ref and never touched that value.
+
+### Nothing else moved
+
+| Check | Before | After |
+|---|---|---|
+| wavesurfer instances created | 2 | **2**, after playback, two seeks, a region resize and six switch toggles |
+| Renders during a region resize | 6 | **6** |
+| `region-updated` events per resize | 1 | **1** |
+| Preview gain, effects on against off | +9.34 dB | **+9.34 dB** |
+
+Two of those are the acceptance: the waveform is not rebuilt, and preview still
+schedules its envelope. The envelope was checked by position, not by presence —
+a seek to 6 s scheduled position **5** and a seek to 22 s scheduled **21**, on a
+region starting at 1 s.
+
+### Bundle
+
+| Asset | After 011 | After 019 | **After 020** |
+|---|---|---|---|
+| `index.*.js` gzip | 113.34 KiB | 115.40 KiB | **114.35 KiB** |
+| `AdvancedPanel.*.js` gzip | 3.64 KiB | 3.64 KiB | 3.64 KiB |
+| `encode-worker.*.js` raw | 80.84 KiB | 80.84 KiB | 80.84 KiB |
+
+**−1.05 KiB**, by deleting a dependency rather than adding one.
+
+### Where the Simple bundle has been
+
+| Ticket | gzip |
+|---|---|
+| 001, the baseline | 153.72 KiB |
+| 014, Tailwind config out | 136.62 KiB |
+| 008, the engine rewrite | 111.95 KiB |
+| 010, loudness | 113.02 KiB |
+| 011, four formats | 113.34 KiB |
+| 019, preview | 115.40 KiB |
+| **020, this one** | **114.35 KiB** |
+
+**−25.6% against the ticket 001 baseline**, with four output formats, a bit
+depth, a sample rate, LUFS normalization and preview added along the way.

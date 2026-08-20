@@ -56,9 +56,6 @@ importers:
       '@toots/shine.js':
         specifier: ^1.0.3
         version: 1.0.3
-      '@wavesurfer/react':
-        specifier: ^1.0.7
-        version: 1.0.7(react@18.3.1)(wavesurfer.js@7.8.9)
       class-variance-authority:
         specifier: ^0.7.0
         version: 0.7.1
@@ -840,12 +837,6 @@ packages:
 
   '@vitest/utils@0.34.6':
     resolution: {integrity: sha512-IG5aDD8S6zlvloDsnzHw0Ut5xczlF+kv2BOTo+iXfPr54Yhi5qbVOgGB1hZaVq4iJ4C/MZ2J0y15IlsV/ZcI0A==}
-
-  '@wavesurfer/react@1.0.7':
-    resolution: {integrity: sha512-Bw2rd2zqVL1ERy8N9mciacbQW3N5Gn9oRjhq3kjqgtLeE8a1WSTU+4kU0E37541jf432eNZ8lNzuodFFSiNccw==}
-    peerDependencies:
-      react: ^18.2.0
-      wavesurfer.js: '>=7.7.14'
 
   acorn-walk@8.3.5:
     resolution: {integrity: sha512-HEHNfbars9v4pgpW6SO1KSPkfoS0xVOM/9UzkJltjlsHZmJasxg8aXkuZa7SMf8vKGIBhpUsPluQSqhJFCqebw==}
@@ -2596,11 +2587,6 @@ snapshots:
       diff-sequences: 29.6.3
       loupe: 2.3.7
       pretty-format: 29.7.0
-
-  '@wavesurfer/react@1.0.7(react@18.3.1)(wavesurfer.js@7.8.9)':
-    dependencies:
-      react: 18.3.1
-      wavesurfer.js: 7.8.9
 
   acorn-walk@8.3.5:
     dependencies:
