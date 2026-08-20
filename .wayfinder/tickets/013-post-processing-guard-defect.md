@@ -149,6 +149,14 @@ baselines used, so the rows compare directly.
 
 **Four distinct hashes. No collisions.**
 
+> **These four hashes no longer reproduce, from 2026-08-19.**
+> [Ticket 011](./011-webcodecs-encoder-path.md) made the WAV writer **round**
+> rather than let `DataView.setInt16` truncate toward zero. Every exported WAV
+> moved by up to half a step, which is under −90 dBFS and is a fix, not a
+> regression: truncation biased every sample the same direction. What this table
+> proves is unaffected — the four rows still have to be four distinct files, and
+> they are. Regenerate the hashes before comparing against them again.
+
 Read the last two rows carefully: they are **byte-identical to the baseline**.
 Where normalize was on, the pipeline already ran and its output has not moved.
 Only the two broken rows changed, and both changed because work the user asked

@@ -258,6 +258,77 @@ chips that can be reordered, with draggable crossfades between them.
   never revoked** — about 74 MB per ten-file export, now ticket 018. Every "not
   worth it" here rests on one unmeasured number, the encode share of a slice.
 
+- [008 — Build the edit stack and rewrite the engine](./tickets/008-build-the-edit-stack.md)
+  — **built. The spine is in.** One `buildGraph`, rendered by an
+  `OfflineAudioContext` and previewable by a live one, with the region cut by
+  `start(0, offset, duration)` and every effect a node in one graph.
+  `audio-trimmer.ts`, `audio-processors.ts` and `audio-worker.ts` are deleted,
+  and with them both defects this ticket named. **Every baseline is beaten:**
+  5-minute MP3 slice 2329.2 → 1494.2 ms, batch of ten 2350 → 1525.2 ms, decode
+  1262.7 → 556.7 ms, bundle 136.62 → **111.95 KiB gzip** (JSZip now arrives on
+  the click). **A 45-minute track exports three times in a row**, where the
+  baseline sweep killed the tab on the second — that was finding 1. Files decode
+  at their own sample rate now, which closes the standing rule 1 break in finding
+  3. `pnpm test` is 10 → 89. Four defects were found and fixed on the way, and
+  the biggest was ours: **the progress worklet ticket 002 chose leaked 322.8 MB
+  per thirty renders**, because `addModule` on an `OfflineAudioContext` keeps
+  that context alive and there is no `close()` to call. Progress is `suspend()`
+  and `resume()` now, and both designs carry the correction. Simple view's stack
+  is deliberately **not** the canonical order: the doubled peak normalization is
+  input gain staging, and dropping it would make "Apply Post Processing? Yes" do
+  nothing on a quiet file.
+
+- [018 — Export blob URLs are never revoked](./tickets/018-revoke-export-blob-urls.md)
+  — **fixed inside ticket 008, by option 3.** The worker returns a `Blob`, so an
+  intermediate output never becomes a URL and there is nothing to time. One file,
+  [`download.ts`](../src/lib/download.ts), is the only place an export blob URL
+  is created, and it revokes every one. Measured: **zero blob URLs created** by
+  three ten-file exports, and RSS 792.6 → 784.5 MB across thirty renders and
+  those exports. The control run holding six zips deliberately released 303.2 MB
+  against 317.5 MB held, which is ticket 015's one-for-one rule again.
+
+- [010 — Build LUFS normalization with tests](./tickets/010-build-lufs-normalization.md)
+  — **built. "Normalize Levels?" measures loudness now**, per ITU-R BS.1770-5, at
+  −14 LUFS with a −1 dBTP ceiling. Simple view gained no control; Advanced view
+  got the target. **Verified against ffmpeg's `ebur128` through the production
+  UI: −14.0 LUFS, −1.2 dBFS peak**, where the same export read −16.8 before. The
+  acceptance is exact — the same music 30.4 LU apart comes out at −13.99 LUFS
+  both times. Every EBU Tech 3341 vector a file-based meter can run passes, at
+  48 kHz **and** at 44.1 kHz on coefficients no document publishes, which is what
+  ticket 005 was for. The interaction the ticket asked about was not the one
+  expected: **`DynamicsCompressorNode` applies a +0.541 dB makeup gain nothing
+  asked for**, constant at every level below its threshold, which broke the
+  ceiling and made every export since before this map 0.541 dB loud. It is now
+  measured at runtime and cancelled — not hard-coded, because the Web Audio
+  specification does not mention it and another browser may differ. Peak
+  normalization stays, as gain staging into the compressor. `pnpm test` 89 → 125.
+  Bundle 111.95 → 113.02 KiB gzip, with the loudness DSP in the worker where it
+  runs, not in the Simple bundle.
+
+- [011 — WebCodecs encoder path with fallback](./tickets/011-webcodecs-encoder-path.md)
+  — **built. Four formats, three encoders.** Advanced view offers **WAV, MP3,
+  FLAC and Opus**, with a bit depth and a sample rate beside them; Simple view
+  still offers WAV and MP3 and nothing about it changed. **Only Opus is native
+  and only Opus can be missing** — it is offered when
+  `AudioEncoder.isConfigSupported` says yes to the exact config, on Chrome and
+  Edge 94+, Firefox 130+ desktop and Safari 26+. FLAC is libFLAC in WASM on every
+  browser, MP3 is still `shine.js` on every browser, and 24-bit WAV is written by
+  hand with **`WAVE_FORMAT_EXTENSIBLE`**, verified byte by byte. **An Opus slice
+  is a `.webm` file**, because Ogg needs a header no engine emits. The headline
+  nobody predicted: **FLAC 16-bit is 2.5× faster than MP3 320 and the same size,
+  and it loses nothing** — differenced against the WAV it is one quantization
+  step, exactly. Opus is −20.7% against MP3 on a ten-file zip and −17.4% on a
+  45-minute track, at 2.4× smaller. Every format opens in ffprobe, VLC and
+  Chromium. Two build changes were forced: **the worker is an ES module** so
+  mediabunny can be a dynamic import, and the browser target rose to
+  `chrome80, edge80, firefox114, safari15` because Safari 13 has no `BigInt`.
+  `RenderOptions.sampleRate` is **deleted** — resampling through an
+  `AudioBufferSourceNode` aliases, so the rate is chosen once, at the decode.
+  The WAV writer now rounds instead of truncating, which costs 15.8 ms on a
+  5-minute track and **changes exported bytes**. Simple bundle 113.02 → **113.34
+  KiB gzip**, with 258 KiB of mediabunny arriving only for FLAC and Opus.
+  `pnpm test` 125 → 165.
+
 ## Not yet specified
 
 - Advanced panel layout for the Regions, Sound and Export sections
@@ -278,6 +349,26 @@ chips that can be reordered, with draggable crossfades between them.
 - The region tools — split on silence, and snap to transients. Ticket 002 ruled
   both out of the edit stack: they make and move regions, they do not change
   sound. So each needs its own detection design, and neither is sharp yet.
+- A level-setting slot before the compressor in the canonical order. Ticket 008
+  found the hole: Simple view's "both switches on" stack normalizes, compresses,
+  then normalizes again, and the canonical order cannot express that. Whether the
+  fix is a second `gain` position, a free-floating `peakNormalization`, or a
+  named "input gain" operation is a design decision, and it only matters once
+  Advanced view can reorder a stack a user can see.
+- Cancelling a running export. The engine takes it — `renderRegion` accepts
+  `isCancelled` and an in-flight 5-minute MP3 encode abandons in 76.5 ms — and
+  there is no button. Where it lives, and what it does to a half-built zip,
+  belongs with whichever ticket adds the control.
+- Replacing `shine.js` with `@mediabunny/mp3-encoder`. Ticket 011 left it alone
+  on purpose: MP3 is the compatibility format now rather than the only
+  compressed one, and mediabunny is already loaded whenever FLAC or Opus is
+  chosen. Whether a SIMD LAME build beats a fixed-point Shine build **in the
+  browser** is unmeasured by anybody — shine's own benchmarks are native
+  binaries. It needs a measurement before it can be a ticket.
+- Per-track export overrides. Bit depth, sample rate and output format are
+  master defaults, and a track cannot disagree with them. The mechanism is
+  ticket 003's; what a per-track override means for a batch that then produces
+  four formats in one zip is not decided.
 
 ## Out of scope
 

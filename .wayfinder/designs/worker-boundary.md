@@ -85,6 +85,24 @@ type EncodeCancelled  = { id: number; cancelled: true };
 type EncodeFailed     = { id: number; error: string };
 ```
 
+> **Amended 2026-08-19 by ticket 008, which built this.** Two changes, both
+> proved in the browser. The live protocol is
+> [`src/lib/encode-protocol.ts`](../../src/lib/encode-protocol.ts).
+>
+> 1. **`EncodeDone` carries a `Blob`, not a `url`.** Section 6 below calls the
+>    unrevoked URL "a defect, not a design", and this removes it rather than
+>    timing around it. The per-file outputs of a batch export are never
+>    downloaded — they exist only to go into the zip — so they never needed a URL
+>    at all. A `Blob` crosses `postMessage` by reference and there is nothing to
+>    revoke. That is ticket 018's option 3, and it closes ticket 018.
+> 2. **A third request, `measure`, returns the loudest sample in a set of
+>    channels.** Not anticipated here, and forced by section 3. Peak
+>    normalization has to know the peak of a rendered pass before the next pass
+>    can be built, and scanning a 45-minute stereo region is 260 million
+>    samples — a quarter-second freeze, which standing rule 7 forbids. The
+>    measuring pass's output is thrown away the moment the number arrives, so
+>    its channels are the one thing that is always safe to transfer.
+
 The request is sent with a transfer list:
 
 ```ts

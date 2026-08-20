@@ -18,7 +18,13 @@ export function AdvancedSettingsChip() {
   const view = useEffectiveView();
   // Selects the count, not the array, so this redraws only when the number
   // changes — not every time any track changes.
-  const count = useAudioStore((state) => countAdvancedSettings(state.tracks));
+  const count = useAudioStore((state) =>
+    countAdvancedSettings(state.tracks, {
+      exportFileType: state.exportFileType,
+      bitDepth: state.bitDepth,
+      outputSampleRate: state.outputSampleRate,
+    })
+  );
 
   if (view !== "simple" || count === 0) return null;
 

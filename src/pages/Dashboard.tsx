@@ -7,6 +7,8 @@ import { EditorTrack, useAudioStore } from "@/stores/audio-store";
 import MasterToolbar from "@/components/custom/MasterToolbar";
 import SineWaveLoader from "@/components/custom/SineWaveLoader";
 import { AdvancedSettingsChip } from "@/components/custom/AdvancedSettingsChip";
+import { RefusedFilesNotice } from "@/components/custom/RefusedFilesNotice";
+import { SliceProgressLabel } from "@/components/custom/SliceProgressLabel";
 import { countRender } from "@/lib/render-count";
 
 export default function Dashboard() {
@@ -40,6 +42,7 @@ export default function Dashboard() {
         <div className="container px-4 md:px-8 flex-grow flex flex-col">
           <div>
             <BrowserMultiFileUpload onUploadComplete={updateTrackCallback} />
+            <RefusedFilesNotice />
             {files.length > 0 && (
               <div>
                 <AdvancedSettingsChip />
@@ -87,6 +90,16 @@ export default function Dashboard() {
             amplitude={0.1}
             frequency={0.015}
           />
+
+          {/*
+            The progress line sits outside `SineWaveLoader`, and it subscribes
+            to the store itself. The loader draws to a canvas and takes its
+            message as a prop, so feeding it a string that changes many times a
+            second would restart the animation on every tick.
+          */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-1/3">
+            <SliceProgressLabel />
+          </div>
         </div>
       )}
     </>

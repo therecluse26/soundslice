@@ -4,6 +4,8 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { LoudnessTarget } from "./LoudnessTarget";
+import { ExportOptions } from "./ExportOptions";
 
 /**
  * The Advanced view panel on a track card.
@@ -38,9 +40,10 @@ export default function AdvancedPanel() {
       <AccordionItem value="sound">
         <AccordionTrigger>Sound</AccordionTrigger>
         <AccordionContent>
+          <LoudnessTarget />
           <EmptySection
-            what="EQ, loudness target, compressor, noise reduction, time and pitch."
-            ticket="tickets 010 and the Sound feature tickets"
+            what="EQ, compressor, noise reduction, and time and pitch."
+            ticket="the Sound feature tickets"
           />
         </AccordionContent>
       </AccordionItem>
@@ -48,9 +51,10 @@ export default function AdvancedPanel() {
       <AccordionItem value="export" className="border-b-0">
         <AccordionTrigger>Export</AccordionTrigger>
         <AccordionContent>
+          <ExportOptions />
           <EmptySection
-            what="FLAC, Opus, bit depth, sample rate, or one joined file."
-            ticket="ticket 011"
+            what="One joined file, with crossfades between regions."
+            ticket="the join strip's own ticket"
           />
         </AccordionContent>
       </AccordionItem>

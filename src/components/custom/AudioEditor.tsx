@@ -21,8 +21,9 @@ import {
   ReloadIcon,
 } from "@radix-ui/react-icons";
 import { useTheme } from "@/hooks/useTheme";
-import { useAudioStore } from "@/stores/audio-store";
+import { masterExportSettings, useAudioStore } from "@/stores/audio-store";
 import { AudioService } from "@/lib/audio-service";
+import { downloadBlob } from "@/lib/download";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { Slider } from "../ui/slider";
 import { useEffectiveView } from "@/hooks/useEffectiveView";
@@ -56,10 +57,6 @@ const formatTime = (seconds: number) =>
   [seconds / 60, seconds % 60]
     .map((v) => `0${Math.floor(v)}`.slice(-2))
     .join(":");
-
-const filenameWithoutExtension = (filename: string) => {
-  return filename.split(".").slice(0, -1).join(".");
-};
 
 /**
  * The region a track gets when it has none yet.
@@ -230,40 +227,32 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     setDownloading(true);
 
     // Read at click time, so this card never subscribes to the export settings.
-    const {
-      getTrack,
-      normalizeAudio,
-      applyPostProcessing,
-      trimSilence,
-      exportFileType,
-    } = useAudioStore.getState();
+    const settings = masterExportSettings();
+    const currentTrack = useAudioStore.getState().getTrack(file.name);
 
-    const currentTrack = getTrack(file.name);
     if (!currentTrack) {
       setDownloading(false);
       return;
     }
 
-    const blobUrl = await AudioService.sliceAudio(
-      currentTrack,
-      normalizeAudio,
-      applyPostProcessing,
-      trimSilence,
-      exportFileType
-    );
-    if (!blobUrl) {
-      setDownloading(false);
-      return;
-    }
+    try {
+      const blob = await AudioService.sliceTrack(currentTrack, settings);
+      if (!blob) return;
 
-    const link = document.createElement("a");
-    link.style.display = "none";
-    link.href = blobUrl;
-    link.download = `trimmed_${filenameWithoutExtension(file.name)}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setDownloading(false);
+      // `AudioService.outputFileName`, not the format value with a dot in front.
+      // Opus writes a `.webm` file, so the format and the extension are two
+      // different things now and only one place knows which is which.
+      downloadBlob(
+        blob,
+        AudioService.outputFileName(
+          file.name,
+          settings.exportFileType,
+          "trimmed_"
+        )
+      );
+    } finally {
+      setDownloading(false);
+    }
   };
 
   // Effects

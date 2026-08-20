@@ -108,6 +108,23 @@ _Avoid_: noise floor, sample
 
 ### The output
 
+**Output format**:
+Which kind of file a slice is written as. One of WAV, MP3, FLAC or Opus. Simple
+view offers WAV and MP3. Advanced view offers all four. An Opus slice is written
+into a WebM file, so it is named `.webm` and not `.opus`.
+_Avoid_: file type, codec, container, encoding
+
+**Bit depth**:
+How many bits hold each stored sample. 16 or 24. Only WAV and FLAC have one —
+MP3 and Opus store frequencies rather than samples.
+_Avoid_: resolution, quality, word length
+
+**Sample rate**:
+How many samples a second a file holds. A slice keeps the source file's rate
+unless the user picks another. Some output formats accept only certain rates,
+and the nearest one they accept is used.
+_Avoid_: frequency, resolution, kHz
+
 **Join**:
 Combining regions from any track into one output file, with crossfades between
 them.

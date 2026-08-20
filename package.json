@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@mediabunny/flac-encoder": "^1.55.1",
     "@radix-ui/react-accordion": "^1.2.0",
     "@radix-ui/react-avatar": "^1.1.0",
     "@radix-ui/react-checkbox": "^1.1.1",
@@ -31,6 +32,7 @@
     "clsx": "^2.1.1",
     "jszip": "^3.10.1",
     "lodash": "^4.17.21",
+    "mediabunny": "^1.55.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-wrap-balancer": "^1.1.1",
@@ -41,6 +43,7 @@
     "zustand": "^5.0.0-rc.2"
   },
   "devDependencies": {
+    "@types/dom-webcodecs": "^0.1.19",
     "@types/lodash": "^4.17.9",
     "@types/node": "^20.16.9",
     "@types/react": "^18.3.9",

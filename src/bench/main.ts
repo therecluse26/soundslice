@@ -11,12 +11,26 @@
  *
  * Entry point is bench.html, a dev-only Vite entry. Vite's default build input
  * is index.html alone, so this never reaches the production bundle.
+ *
+ * ## What ticket 008 changed about the stages
+ *
+ * The old harness timed `AudioTrimmer.trimAudio` and `applyProcessingPipeline`
+ * separately. Neither exists: the trim is now one `start(0, offset, duration)`
+ * call inside the render, and the pipeline is one graph. So those two rows are
+ * replaced by one — **render only** — which covers exactly the same work.
+ *
+ * The encode rows pass `transfer: false`. Transferring detaches the buffer, and
+ * these rows time the same buffer three times. The production path transfers;
+ * `encodeWavTransferred` times that separately, once.
  */
 
 import { AudioLoader } from "@/lib/audio-loader";
-import { AudioTrimmer } from "@/lib/audio-trimmer";
 import { AudioService, OutputFormat } from "@/lib/audio-service";
-import { applyProcessingPipeline } from "@/lib/audio-processors";
+import { encode } from "@/lib/encoder";
+import { renderRegion } from "@/lib/render";
+import { simpleStack, defaultRegion } from "@/lib/edit-stack";
+import { sniffSampleRate } from "@/lib/audio-format";
+import { integratedLoudness, truePeakDb } from "@/lib/loudness";
 import type { EditorTrack } from "@/stores/audio-store";
 
 const RUNS = 3;
@@ -44,6 +58,7 @@ type FileResult = {
   bytes: number;
   durationSec: number | null;
   sampleRate: number | null;
+  sniffedRate: number | null;
   channels: number | null;
   measurements: Record<string, Measurement>;
 };
@@ -84,7 +99,8 @@ function heapBytes(): number | null {
 /** Runs one operation RUNS times, timing each and tracking the heap high-water mark. */
 async function measure(
   label: string,
-  op: () => Promise<void> | void
+  op: () => Promise<void> | void,
+  runs_ = RUNS
 ): Promise<Measurement> {
   const runs: number[] = [];
   let peak = 0;
@@ -99,7 +115,7 @@ async function measure(
   }, 100);
 
   try {
-    for (let i = 0; i < RUNS; i++) {
+    for (let i = 0; i < runs_; i++) {
       const before = heapBytes();
       if (before !== null) {
         sawHeap = true;
@@ -152,22 +168,24 @@ async function fetchAsFile(name: string): Promise<File> {
  * The measured region is the whole track. That is the worst case, and it is
  * deterministic, so two runs of this harness compare directly.
  *
- * AudioService.sliceAudio only reads .start and .end off the region, so a plain
- * object is enough. It never needed a real wavesurfer Region — a finding this
- * harness recorded for ticket 009, which has since taken the plugin object out
- * of the store. The field is now `region`, and its type is those two numbers.
+ * `defaultRegion` gives it 0 dB of region gain and the 20 ms fade edges every
+ * slice has always had, so this is the same audio the old harness measured.
  */
 function trackFor(file: File, durationSec: number): EditorTrack {
-  return {
-    file,
-    region: { start: 0, end: durationSec },
-  };
+  return { file, region: defaultRegion(0, durationSec) };
 }
 
-/** Blob URLs pin their blob in memory until revoked. A 45-minute WAV is ~476 MB. */
-function release(url: string | null) {
-  if (url) URL.revokeObjectURL(url);
-}
+const SWITCHES_OFF = {
+  normalizeAudio: false,
+  applyPostProcessing: false,
+  exportFileType: OutputFormat.WAV,
+};
+
+const SWITCHES_ON = {
+  normalizeAudio: true,
+  applyPostProcessing: true,
+  exportFileType: OutputFormat.WAV,
+};
 
 async function measureFile(name: string): Promise<FileResult> {
   say(`\n── ${name} ──`);
@@ -179,9 +197,16 @@ async function measureFile(name: string): Promise<FileResult> {
     bytes: file.size,
     durationSec: null,
     sampleRate: null,
+    sniffedRate: null,
     channels: null,
     measurements: {},
   };
+
+  // `AudioLoader.sampleRateOf`, not `sniffSampleRate` on the first window.
+  // A file with a large ID3 tag needs the second look past the tag, and
+  // reporting the one-window answer here reads as "unknown format" for a file
+  // the loader reads perfectly.
+  result.sniffedRate = await AudioLoader.sampleRateOf(file);
 
   // Probe once, outside the timed runs, to record the decoded shape.
   try {
@@ -190,7 +215,8 @@ async function measureFile(name: string): Promise<FileResult> {
     result.sampleRate = probe.sampleRate;
     result.channels = probe.numberOfChannels;
     say(
-      `   decoded: ${result.durationSec}s, ${result.sampleRate} Hz, ${result.channels} ch`
+      `   decoded: ${result.durationSec}s, ${result.sampleRate} Hz, ` +
+        `${result.channels} ch (header said ${result.sniffedRate ?? "nothing"})`
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -206,8 +232,9 @@ async function measureFile(name: string): Promise<FileResult> {
 
   const duration = result.durationSec as number;
 
-  // 1. Decode — AudioLoader.loadAudioFile. Note this both decodes and then
-  //    re-renders through an OfflineAudioContext, which is redundant work.
+  // 1. Decode — one `decodeAudioData`, at the file's own rate. It used to
+  //    decode and then re-render the result through an OfflineAudioContext that
+  //    changed nothing.
   say(`   decode (AudioLoader.loadAudioFile)`);
   result.measurements.decode = await measure("decode", async () => {
     const buf = await AudioLoader.loadAudioFile(file);
@@ -215,91 +242,114 @@ async function measureFile(name: string): Promise<FileResult> {
   });
 
   // 2. Slice end to end, every switch off, exporting WAV.
-  say(`   slice, switches off (AudioService.sliceAudio, WAV)`);
-  result.measurements.sliceAllOffWav = await measure(
-    "slice off",
-    async () => {
-      const url = await AudioService.sliceAudio(
-        trackFor(file, duration),
-        false,
-        false,
-        false,
-        OutputFormat.WAV
-      );
-      release(url);
-    }
-  );
+  say(`   slice, switches off (AudioService.sliceTrack, WAV)`);
+  result.measurements.sliceAllOffWav = await measure("slice off", async () => {
+    const blob = await AudioService.sliceTrack(
+      trackFor(file, duration),
+      SWITCHES_OFF
+    );
+    void blob?.size;
+  });
 
   // 3. Slice end to end, normalize and post-processing on, exporting WAV.
   say(`   slice, normalize + post-processing on (WAV)`);
   result.measurements.sliceProcessedWav = await measure(
     "slice on",
     async () => {
-      const url = await AudioService.sliceAudio(
+      const blob = await AudioService.sliceTrack(
         trackFor(file, duration),
-        true,
-        true,
-        false,
-        OutputFormat.WAV
+        SWITCHES_ON
       );
-      release(url);
+      void blob?.size;
     }
   );
 
-  // 4. Stage breakdown, so ticket 008 can see which stage regressed rather
+  // 4. Stage breakdown, so a later ticket can see which stage regressed rather
   //    than only that something did.
-  let staged: AudioBuffer | null = null;
+  let decoded: AudioBuffer | null = null;
   try {
-    staged = AudioTrimmer.trimAudio(
-      await AudioLoader.loadAudioFile(file),
-      0,
-      duration
-    );
+    decoded = await AudioLoader.loadAudioFile(file);
   } catch (err) {
     say(
-      `   stage setup FAILED: ${err instanceof Error ? err.message : String(err)}`,
+      `   stage setup FAILED: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
       "err"
     );
   }
 
-  if (staged) {
-    const trimmed = staged;
+  if (decoded) {
+    const source = decoded;
+    const region = defaultRegion(0, duration);
 
-    say(`   trim only (AudioTrimmer.trimAudio)`);
-    result.measurements.trimOnly = await measure("trim", async () => {
-      const out = AudioTrimmer.trimAudio(trimmed, 0, trimmed.duration);
+    // Replaces the old "trim only" and "pipeline only" rows together. The trim
+    // is inside this now, and so is every effect.
+    say(`   render only, switches off (renderRegion, 1 pass)`);
+    result.measurements.renderOff = await measure("render off", async () => {
+      const out = await renderRegion(source, region, simpleStack(SWITCHES_OFF));
       void out.length;
     });
 
-    say(`   pipeline only (applyProcessingPipeline, normalize + compress)`);
-    result.measurements.pipelineOnly = await measure("pipeline", async () => {
-      const out = await applyProcessingPipeline(trimmed, {
-        normalize: true,
-        compress: true,
-        trimSilence: false,
-      });
+    say(`   render only, switches on (renderRegion, 3 passes)`);
+    result.measurements.renderOn = await measure("render on", async () => {
+      const out = await renderRegion(source, region, simpleStack(SWITCHES_ON));
       void out.length;
     });
 
-    say(`   encode WAV only (worker)`);
+    // What attaching the progress worklet costs. Standing rule 7 wants
+    // progress; this is the price of it, and it was not measured before.
+    say(`   render only, switches off, with progress worklet`);
+    result.measurements.renderOffWithProgress = await measure(
+      "render off + progress",
+      async () => {
+        const out = await renderRegion(
+          source,
+          region,
+          simpleStack(SWITCHES_OFF),
+          { onProgress: () => {} }
+        );
+        void out.length;
+      }
+    );
+
+    const rendered = await renderRegion(
+      source,
+      region,
+      simpleStack(SWITCHES_OFF)
+    );
+
+    say(`   encode WAV only (worker, channels copied)`);
     result.measurements.encodeWav = await measure("encode wav", async () => {
-      const url = await AudioTrimmer.createDownloadLink(
-        trimmed,
-        "bench.wav",
-        OutputFormat.WAV
-      );
-      release(url);
+      const blob = await encode(rendered, OutputFormat.WAV, {
+        transfer: false,
+      }).done;
+      void blob?.size;
     });
 
-    say(`   encode MP3 only (shine.js in worker, 320 kbps)`);
+    say(`   encode MP3 only (shine.js in worker, 320 kbps, channels copied)`);
     result.measurements.encodeMp3 = await measure("encode mp3", async () => {
-      const url = await AudioTrimmer.createDownloadLink(
-        trimmed,
-        "bench.mp3",
-        OutputFormat.MP3
-      );
-      release(url);
+      const blob = await encode(rendered, OutputFormat.MP3, {
+        transfer: false,
+      }).done;
+      void blob?.size;
     });
+
+    // One run only. Transferring detaches the buffer, so there is no second run
+    // to give. This is the number the app actually pays.
+    say(`   encode WAV only, channels transferred (one run)`);
+    result.measurements.encodeWavTransferred = await measure(
+      "encode wav transferred",
+      async () => {
+        const fresh = await renderRegion(
+          source,
+          region,
+          simpleStack(SWITCHES_OFF)
+        );
+        const blob = await encode(fresh, OutputFormat.WAV).done;
+        void blob?.size;
+      },
+      1
+    );
   }
 
   return result;
@@ -316,8 +366,6 @@ async function measureBatch(): Promise<Measurement> {
   const probe = await AudioLoader.loadAudioFile(file);
   const duration = probe.duration;
 
-  // A plain array. `sliceAllFilesIntoZip` used to take a `MutableRefObject`,
-  // because the store held its tracks in one. Ticket 009 made that real state.
   const tracks = Array.from({ length: BATCH_TRACKS }, (_, i) =>
     trackFor(
       new File([file], `clip-30s-${i}.wav`, { type: "audio/wav" }),
@@ -326,14 +374,8 @@ async function measureBatch(): Promise<Measurement> {
   );
 
   return measure("batch zip", async () => {
-    const url = await AudioService.sliceAllFilesIntoZip(
-      tracks as any,
-      false,
-      false,
-      false,
-      OutputFormat.WAV
-    );
-    release(url);
+    const zip = await AudioService.sliceAllFilesIntoZip(tracks, SWITCHES_OFF);
+    void zip.size;
   });
 }
 
@@ -361,6 +403,7 @@ async function run(files: string[]) {
         bytes: 0,
         durationSec: null,
         sampleRate: null,
+        sniffedRate: null,
         channels: null,
         measurements: {
           fatal: { runs: [], medianMs: null, peakHeapMB: null, error: message },
@@ -407,14 +450,22 @@ async function run(files: string[]) {
   // exhaust the tab, and a whole-file run cannot tell you which stage did it.
   lib: {
     AudioLoader,
-    AudioTrimmer,
     AudioService,
-    applyProcessingPipeline,
     OutputFormat,
+    encode,
+    renderRegion,
+    simpleStack,
+    defaultRegion,
+    sniffSampleRate,
     fetchAsFile,
     trackFor,
     measure,
-    release,
+    SWITCHES_OFF,
+    SWITCHES_ON,
+    // Ticket 010's acceptance is measured, not listened to: two tracks at very
+    // different levels, both normalized, must read the same LUFS.
+    integratedLoudness,
+    truePeakDb,
   },
 };
 

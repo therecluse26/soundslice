@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -15,10 +15,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAudioStore } from "@/stores/audio-store";
-import { OutputFormat, AudioService } from "@/lib/audio-service";
+import { masterExportSettings, useAudioStore } from "@/stores/audio-store";
+import { AudioService } from "@/lib/audio-service";
+import {
+  ADVANCED_FORMATS,
+  FORMAT_LABEL,
+  OutputFormat,
+  SIMPLE_FORMATS,
+  needsWebCodecs,
+} from "@/lib/output-format";
+import { canEncodeOpus } from "@/lib/encode-capabilities";
+import { downloadBlob } from "@/lib/download";
 import { DownloadIcon, QuestionMarkCircledIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { useEffectiveView } from "@/hooks/useEffectiveView";
 import { countRender } from "@/lib/render-count";
 
 const MasterToolbar = () => {
@@ -35,40 +45,36 @@ const MasterToolbar = () => {
   const setApplyPostProcessing = useAudioStore(
     (state) => state.setApplyPostProcessing
   );
-  // Selected for the commented-out Trim Silence control below, so uncommenting
-  // it needs no other change. The operation itself is removed by ticket 008.
-  const trimSilence = useAudioStore((state) => state.trimSilence);
-  const setTrimSilence = useAudioStore((state) => state.setTrimSilence);
   const exportFileType = useAudioStore((state) => state.exportFileType);
   const setExportFileType = useAudioStore((state) => state.setExportFileType);
   const setProcessingLoading = useAudioStore(
     (state) => state.setProcessingLoading
   );
+  const setSliceProgress = useAudioStore((state) => state.setSliceProgress);
 
   const [downloading, setDownloading] = useState(false);
 
   const isMobile = useMediaQuery("(max-width: 800px)");
+  const view = useEffectiveView();
+  const formats = useOfferedFormats(view === "advanced", exportFileType);
 
   const handleExportFiles = async () => {
     setDownloading(true);
     setProcessingLoading(true);
+    setSliceProgress(null);
 
     try {
-      const respUrl = await AudioService.sliceAllFilesIntoZip(
+      const zip = await AudioService.sliceAllFilesIntoZip(
         useAudioStore.getState().tracks,
-        normalizeAudio,
-        applyPostProcessing,
-        trimSilence,
-        exportFileType
+        masterExportSettings(),
+        { onProgress: setSliceProgress }
       );
 
-      const link = document.createElement("a");
-      link.style.display = "none";
-      link.href = respUrl;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // The zip is the only export blob that ever becomes a URL, and
+      // `downloadBlob` revokes it. Every file inside it went in as a `Blob`.
+      downloadBlob(zip, "sliced-audio.zip");
     } finally {
+      setSliceProgress(null);
       setProcessingLoading(false);
       setDownloading(false);
     }
@@ -89,7 +95,14 @@ const MasterToolbar = () => {
               <Tooltip>
                 <TooltipTrigger><QuestionMarkCircledIcon /></TooltipTrigger>
                 <TooltipContent className="bg-background border-2 border-white text-white w-80 border-dotted">
-                  <p>Maximize the volume of all tracks - this will make the levels more consistent</p>
+                  {/*
+                    It used to say "maximize the volume". It did not do that and
+                    it should not: it divided by the loudest single sample, which
+                    is peak normalization. Two tracks can share a peak and sound
+                    nothing alike. Ticket 010 made the switch measure loudness in
+                    LUFS, which is what "consistent" always meant.
+                  */}
+                  <p>Bring every track to the same loudness, so they sound equally loud beside each other. Peaks are held below the ceiling, so nothing clips.</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -136,23 +149,13 @@ const MasterToolbar = () => {
               </SelectContent>
             </Select>
           </div>
-          {/* <div className="flex flex-col w-full space-y-2">
-            <Label className="w-full">Trim Silence?</Label>
-            <Select
-              onValueChange={(checked) => {
-                setTrimSilence(checked === "true");
-              }}
-              value={trimSilence.toString()}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={"true"}>Yes</SelectItem>
-                <SelectItem value={"false"}>No</SelectItem>
-              </SelectContent>
-            </Select>
-          </div> */}
+          {/*
+            "Trim Silence?" used to sit here, commented out. Both the control
+            and the operation are gone: `trimSilence` read an `AnalyserNode`
+            before the offline render ran, so it read zeros and could never
+            work. Splitting on silence is a Regions-feature ticket, and it makes
+            regions rather than changing sound.
+          */}
           <div className="flex flex-col w-full space-y-2">
             <Label className="w-full">Output Format</Label>
             <Select
@@ -163,18 +166,11 @@ const MasterToolbar = () => {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem
-                  key={`filetype_${OutputFormat.WAV.toString()}`}
-                  value={OutputFormat.WAV.toString()}
-                >
-                  {OutputFormat.WAV}
-                </SelectItem>
-                <SelectItem
-                  key={`filetype_${OutputFormat.MP3.toString()}`}
-                  value={OutputFormat.MP3.toString()}
-                >
-                  {OutputFormat.MP3}
-                </SelectItem>
+                {formats.map((format) => (
+                  <SelectItem key={`filetype_${format}`} value={format}>
+                    {FORMAT_LABEL[format]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -203,5 +199,50 @@ const MasterToolbar = () => {
     </Card>
   );
 };
+
+/**
+ * Which formats the **Output Format** select offers.
+ *
+ * Three rules, in order:
+ *
+ * 1. **Simple view offers WAV and MP3.** Ticket 011's rule 4 — Simple gains
+ *    speed, not options.
+ * 2. **Advanced view offers all four, minus what this browser cannot encode.**
+ *    Only Opus can be missing; WAV, MP3 and FLAC need nothing from the browser.
+ *    The probe is a real `AudioEncoder.isConfigSupported` call on the exact
+ *    config we would use, because support varies by operating system and by
+ *    channel count, not just by browser.
+ * 3. **The format already chosen is always in the list.** A user who picked FLAC
+ *    in Advanced view and switched to Simple still has FLAC — standing rule 5
+ *    says a view switch never loses work — so the row has to exist or the select
+ *    would read blank and quietly change what they get.
+ */
+function useOfferedFormats(
+  advanced: boolean,
+  current: OutputFormat
+): OutputFormat[] {
+  const [opusEncodable, setOpusEncodable] = useState(false);
+
+  useEffect(() => {
+    // Simple view never offers Opus, so it never asks. The answer is cached for
+    // the life of the page, so switching views asks once at most.
+    if (!advanced) return;
+
+    let live = true;
+    canEncodeOpus().then((can) => {
+      if (live) setOpusEncodable(can);
+    });
+
+    return () => {
+      live = false;
+    };
+  }, [advanced]);
+
+  const offered = (advanced ? ADVANCED_FORMATS : SIMPLE_FORMATS).filter(
+    (format) => opusEncodable || !needsWebCodecs(format)
+  );
+
+  return offered.includes(current) ? offered : [...offered, current];
+}
 
 export default MasterToolbar;

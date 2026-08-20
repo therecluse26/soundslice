@@ -403,3 +403,329 @@ The 45-minute files were not re-run. Finding 1 stands: a 45-minute track survive
 one pass of each stage and dies on repetition. That is still ticket 008's hardest
 acceptance, and it is now slightly worse on the switches-off path, because that
 path does one more render than it did.
+
+---
+
+## Addendum — 2026-08-19: the engine rewrite
+
+[008 — Build the edit stack and rewrite the engine](./tickets/008-build-the-edit-stack.md)
+replaced the engine. Same machine, same browser, same files, same method: three
+runs, median kept, dev server for engine timings and `vite preview` for time to
+first waveform.
+
+**Every headline number is beaten.** Standing rule 4 holds.
+
+| Case | Ticket 001 | After 013 | **After 008** | Against the better of the two |
+|---|---|---|---|---|
+| Decode, 5-minute MP3 | 1262.7 | — | **556.7** | −55.9% |
+| Slice, switches off, 5-minute MP3 | 2329.2 | 2729.8 | **1494.2** | −35.8% |
+| Slice, processed, 5-minute MP3 | 3843.5 | 3632.9 | **2836.9** | −21.9% |
+| Export WAV, 5-minute | 545.0 | — | **523.7** | −3.9% |
+| Export MP3, 5-minute | 3931.3 | — | **3234.4** | −17.7% |
+| Batch, 10 × 30-second | 2350 | 2777.1 | **1525.2** | −35.1% |
+| Time to first waveform, 30-second | 864.2 | 689 | **631** | −8.4% |
+| Simple view bundle, gzip | 153.72 KiB | 136.62 KiB | **111.95 KiB** | −18.1% |
+
+### Every stage, both 30-second and 5-minute files
+
+Medians in milliseconds. All four files now decode at **44100 Hz**, their own
+rate, where all six used to decode at 48000 Hz whatever their rate.
+
+| Measurement | `clip-30s.wav` | `clip-30s.mp3` | `track-5m.wav` | `track-5m.mp3` |
+|---|---|---|---|---|
+| Decode | 28.4 | 64.7 | 223.2 | 556.7 |
+| Slice, switches off | 125.4 | 163.7 | 1172.7 | 1494.2 |
+| Slice, normalize + post on | 262.5 | 298.8 | 2500.4 | 2836.9 |
+| Render only, switches off, 1 pass | 59.3 | 62.7 | 597.6 | 593.8 |
+| Render only, switches on, 3 passes | 196.7 | 196.5 | 1924.8 | 1922.1 |
+| Render only, switches off, with progress | 62.1 | 66.2 | 590.6 | 601.0 |
+| Encode WAV, channels copied | 51.1 | 52.2 | 523.7 | 520.0 |
+| Encode MP3, channels copied | 332.5 | 327.6 | 3234.4 | 3244.8 |
+| Encode WAV, channels transferred, 1 run | 103.6 | 98.8 | 932.0 | 949.3 |
+
+Two rows from the original tables are gone, because the code they timed is gone.
+`AudioTrimmer.trimAudio` is one `start(0, offset, duration)` call inside the
+render, and `applyProcessingPipeline` is one graph. **Render only** covers both.
+
+**Progress is free.** 597.6 ms against 590.6 ms on a 5-minute file is inside the
+noise. It was not free at first — see the ticket.
+
+**Transferring costs about 400 ms on a 5-minute file** against copying, and it
+halves peak memory. That is the trade the worker boundary design took, and this
+is the first time it has had a number.
+
+### Finding 1 is fixed: a 45-minute track survives repeated export
+
+The original sweep of `podcast-45m.mp3` **killed the browser tab** on the second
+run. Three full passes now, decode plus render plus encode, byte-identical
+output each time:
+
+| Pass | Decode | Slice, switches off |
+|---|---|---|
+| 1 | 4735.8 | 13022.2 |
+| 2 | 4598.6 | 13024.8 |
+| 3 | 4846.8 | 13258.7 |
+
+Against 10346.4 ms and 19920.6 ms, single-run, before. The processed path also
+ran three times, at 28851.8, 28861.7 and 28728.5 ms, against 35446.0 ms.
+
+Nothing degrades across passes. That is the point.
+
+### Memory: nothing leaks, and one thing did
+
+RSS of the Playwright Chromium tree, read from `/proc`, garbage collected
+through CDP before every reading — the method ticket 015 established, because
+finding 6 stands: `performance.memory` does not count audio.
+
+**Thirty renders of `clip-30s.wav`, 302.8 MB of output:**
+
+| | RSS growth | ms per render |
+|---|---|---|
+| no progress | +10.3 MB | 61.0 |
+| `AudioWorklet` meter | **+322.8 MB** | 80.6 |
+| `AudioWorklet` meter, port closed and node disconnected | **+316.4 MB** | — |
+| `suspend()` and `resume()` | **−4.3 MB** | 63.8 |
+
+Calling `audioWorklet.addModule` on an `OfflineAudioContext` keeps that context
+alive, and the context holds the buffer it just rendered. There is no way to
+release it: `OfflineAudioContext` has no `close()`, and its state is already
+`"closed"` when rendering finishes. Ticket 002 chose the worklet for progress on
+a measurement that did not look at memory. Ticket 008 replaced it.
+
+**Three ten-file exports, 158.8 MB of zips and 158.8 MB of slices:**
+
+| | |
+|---|---|
+| RSS before | 792.6 MB |
+| RSS after 30 renders **and** the three exports | **784.5 MB** |
+| Blob URLs created by the export path | **0** |
+
+That is [018 — Export blob URLs are never revoked](./tickets/018-revoke-export-blob-urls.md)'s
+acceptance, and it closes it.
+
+### Bundle
+
+| Asset | Ticket 001 | After 014 | After 017 | **After 008** |
+|---|---|---|---|---|
+| `index.*.js` gzip | 153.72 KiB | 136.62 KiB | 136.76 KiB | **111.95 KiB** |
+| `jszip.min.*.js` gzip | in `index` | in `index` | in `index` | **27.98 KiB, on demand** |
+| `AdvancedPanel.*.js` gzip | — | 2.65 KiB | 2.65 KiB | 2.62 KiB |
+| `index.*.css` gzip | 5.87 KiB | 6.02 KiB | 6.02 KiB | 6.06 KiB |
+| `encode-worker.*.js` raw | 75.09 KiB | — | — | 75.76 KiB |
+
+The engine rewrite added about 3 KiB of its own. JSZip paid for it four times
+over: it is 27.98 KiB gzip and only "Slice All Files" needs it, so it now
+arrives on the click.
+
+`pnpm test` is 10 → **89 tests**.
+
+---
+
+## Addendum — 2026-08-19: loudness normalization
+
+[010 — Build LUFS normalization with tests](./tickets/010-build-lufs-normalization.md)
+made "Normalize Levels?" measure loudness rather than peak. That costs an extra
+render pass and a BS.1770 analysis, about 400 ms on a 5-minute track.
+
+**Every headline number still beats the original baseline and the post-013
+numbers.** Same machine, same browser, same files, three runs, median kept.
+
+| Case | Ticket 001 | After 013 | After 008 | **After 010** |
+|---|---|---|---|---|
+| Slice off, 30-second WAV | 192.3 | 242.6 | 125.4 | **123.3** |
+| Slice processed, 30-second WAV | 378.7 | 349.5 | 262.5 | **308.8** |
+| Slice off, 5-minute WAV | 2030.9 | 2238.8 | 1172.7 | **1207.5** |
+| Slice processed, 5-minute WAV | 3779.2 | 3233.1 | 2500.4 | **2801.2** |
+| Slice off, 5-minute MP3 | 2329.2 | 2729.8 | 1494.2 | **1543.0** |
+| Slice processed, 5-minute MP3 | 3843.5 | 3632.9 | 2836.9 | **3090.2** |
+| Batch, 10 × 30-second | 2350 | 2777.1 | 1525.2 | **1584.6** |
+
+A 45-minute MP3 with both switches on ran twice, at **26986.9** and **26915.8
+ms**, against a 35446.0 ms single run that killed the tab on repetition.
+
+What the loudness measurement itself costs, render only:
+
+| File | Without | With | Cost |
+|---|---|---|---|
+| `clip-30s.wav` | 59.9 | 96.6 | +36.7 |
+| `track-5m.wav` | 594.4 | 989.1 | +394.7 |
+
+### Bundle
+
+| Asset | After 008 | **After 010** |
+|---|---|---|
+| `index.*.js` gzip | 111.95 KiB | **113.02 KiB** |
+| `AdvancedPanel.*.js` gzip | 2.62 KiB | 3.00 KiB |
+| `encode-worker.*.js` raw | 75.76 KiB | 78.87 KiB |
+
+The loudness DSP is **not** in the Simple bundle. It ships in the encode worker,
+where it runs, and the target control ships in the Advanced chunk. Checked by
+searching the built files for the K-weighting shelf constant: present in the
+worker, absent from both others.
+
+`pnpm test` is 89 → **125 tests**.
+
+### An accuracy finding that predates this map
+
+**`DynamicsCompressorNode` applies a makeup gain of +0.541 dB that nothing asked
+for.** Measured in Chromium 146 with the limiter's own settings — threshold
+−0.95 dB, ratio 20, knee 0 — a 1 kHz sine:
+
+| Input | Output | Gain |
+|---|---|---|
+| −60.0 dBFS | −59.459 | **+0.541 dB** |
+| −40.0 dBFS | −39.459 | **+0.541 dB** |
+| −20.0 dBFS | −19.459 | **+0.541 dB** |
+| −10.0 dBFS | −9.459 | **+0.541 dB** |
+| −3.0 dBFS | −2.459 | **+0.541 dB** |
+| −0.5 dBFS | −0.342 | +0.158 dB — above threshold, so compressing |
+
+Constant below the threshold, so it is a gain and not compression. **Every
+export this app produced before ticket 010 is 0.541 dB louder than its graph
+says.** It is now measured at runtime and cancelled.
+
+### Verified against an independent implementation
+
+ffmpeg's `ebur128` filter, run on a file exported through the production UI with
+both switches on and the target at −14 LUFS:
+
+```
+I:         -14.0 LUFS
+Peak:       -1.2 dBFS
+```
+
+The same export before the makeup-gain fix read −16.8 LUFS and −0.5 dBFS.
+
+---
+
+## Addendum — 2026-08-19: four output formats
+
+[011 — WebCodecs encoder path with fallback](./tickets/011-webcodecs-encoder-path.md)
+added FLAC and Opus beside WAV and MP3, plus a bit depth and a sample rate.
+
+### Read this before comparing to the tables above
+
+**This session ran under measurably higher machine load than the ticket 008 and
+010 sessions.** Decode of `track-5m.mp3` — on code that did not change — read
+660.4 ms against 556.7 ms, +18.6%. Load average was 4.44 with an unrelated test
+suite taking 19% of one core.
+
+So every number below is a **same-session** comparison: each format measured
+against the others in one run, on one machine, in one state. Cross-session
+figures are recorded but should not be read to three digits.
+
+### Encode only, `track-5m.wav`, three runs, median kept
+
+| Format | ms | Size |
+|---|---|---|
+| WAV 16 | 523.1 | 50.39 MB |
+| WAV 24 | 607.8 | 75.58 MB |
+| **FLAC 16** | **1623.2** | **11.80 MB** |
+| FLAC 24 | 1652.4 | 35.83 MB |
+| **Opus 128** | **2741.5** | **4.72 MB** |
+| MP3 320 | 4066.8 | 11.43 MB |
+
+**FLAC 16 is 2.5× faster than MP3 320 and lands at the same size, losslessly.**
+Opus is 1.48× faster than MP3 and 2.4× smaller.
+
+### The zip path, ten 30-second tracks
+
+| Format | ms | Zip | Against MP3 |
+|---|---|---|---|
+| WAV 16 | 1601.9 | 50.47 MB | −63.9% |
+| WAV 24 | 1783.2 | 75.70 MB | −59.8% |
+| FLAC 16 | 2743.6 | 11.38 MB | −38.2% |
+| Opus 128 | 3516.3 | 4.70 MB | **−20.7%** |
+| MP3 320 | 4435.9 | 11.44 MB | — |
+
+### Whole slice, `podcast-45m.mp3`
+
+The size that used to kill the tab.
+
+| Format | ms | Size |
+|---|---|---|
+| WAV 16 | 12,955 | 454.2 MB |
+| FLAC 24 | 24,773 | 323.5 MB |
+| Opus 128 | 31,716 | 42.6 MB |
+| MP3 320 | 38,377 | 103.0 MB |
+
+Opus is **−17.4%** against MP3 at this size, for a file 2.4× smaller. Both new
+formats complete; neither exhausts the tab.
+
+### What rounding costs
+
+The WAV writer now rounds rather than letting `DataView.setInt16` truncate
+toward zero. Both loops timed alternately over the same 5-minute buffer, so a
+change in machine load hits both equally:
+
+| | ms |
+|---|---|
+| truncating | 317.7, 319.1 |
+| rounding | 330.5, 337.8 |
+
+**+15.8 ms on a 5-minute stereo track** — 5% of the sample loop, about 3% of a
+WAV encode. The ten-file zip is +17.3 ms against ticket 010's 1584.6, which is
+the same cost ten times over on a tenth of the audio each time.
+
+**This changes exported bytes.** Ticket 013's four-row hash table will not match
+its recorded hashes. Truncation biased every sample the same direction by up to
+half a step, and the 24-bit path rounds by hand regardless.
+
+### Every format, read back three ways
+
+Written from the app, then opened with ffprobe, VLC and Chromium's own
+`decodeAudioData`. All three read all seven.
+
+| File | ffprobe | Level |
+|---|---|---|
+| WAV 16 | `pcm_s16le` 44100 stereo 30.000 s | −29.9 mean, −10.4 max |
+| WAV 24 | `pcm_s24le` 44100 stereo 30.000 s | −29.9 mean, −10.4 max |
+| WAV 24 at 24 kHz | `pcm_s24le` **24000** stereo 30.000 s | −29.9 mean, −10.4 max |
+| FLAC 16 | `flac` s16 44100, 16 bits, 30.000 s | −29.9 mean, −10.4 max |
+| FLAC 24 | `flac` s32 44100, 24 bits, 30.000 s | −29.9 mean, −10.4 max |
+| MP3 320 | `mp3` 44100 stereo 29.989 s | −28.9 mean, −9.3 max |
+| Opus 128 | `opus` in `matroska,webm` at **48000**, 30.020 s | −30.0 mean, −10.3 max |
+
+FLAC is lossless, measured rather than assumed. Decoded to float and differenced
+against the WAV of the same depth:
+
+| Pair | Largest difference |
+|---|---|
+| FLAC 24 against WAV 24 | 1.192e-7 — **one 24-bit step** |
+| FLAC 16 against WAV 16 | 3.052e-5 — **one 16-bit step** |
+| WAV 24 against WAV 16 | 1.800e-5 — the 16-bit quantization itself |
+
+### The 24-bit WAV header, byte by byte
+
+Read back from an exported file. `WAVE_FORMAT_EXTENSIBLE`, not tag 1 — Windows
+Media Player refuses tag-1 24-bit.
+
+```
+00000000: 5249 4646 0c20 7900 5741 5645 666d 7420  RIFF. y.WAVEfmt
+00000010: 2800 0000 feff 0200 44ac 0000 9809 0400  (.......D.......
+00000020: 0600 1800 1600 1800 0300 0000 0100 0000  ................
+00000030: 0000 1000 8000 00aa 0038 9b71 6461 7461  .........8.qdata
+```
+
+`fmt ` size 40, `wFormatTag` 0xFFFE, block align 6, 24 bits, `cbSize` 22,
+`wValidBitsPerSample` 24, channel mask 0x3, then the PCM subformat GUID.
+
+The 16-bit header is unchanged: tag 1, a 16-byte `fmt ` chunk, `data` at 36.
+
+### Bundle
+
+| Asset | After 008 | After 010 | **After 011** |
+|---|---|---|---|
+| `index.*.js` gzip | 111.95 KiB | 113.02 KiB | **113.34 KiB** |
+| `AdvancedPanel.*.js` gzip | 2.62 KiB | 3.00 KiB | 3.64 KiB |
+| `jszip.min.*.js` gzip | 27.98 KiB | 27.98 KiB | 27.98 KiB, on demand |
+| `encode-worker.*.js` raw | 75.76 KiB | 78.87 KiB | 80.84 KiB |
+| mediabunny gzip | — | — | **174.18 KiB, on demand** |
+| `@mediabunny/flac-encoder` gzip | — | — | **84.08 KiB, on demand** |
+
+**+0.32 KiB of Simple bundle** buys four formats, a bit depth and a sample rate.
+The 258 KiB of mediabunny arrives only when FLAC or Opus is chosen, and only
+inside the worker: the string `Matroska` is absent from the Simple bundle, the
+Advanced chunk and the encode worker alike.
+
+`pnpm test` is 125 → **165 tests**.

@@ -199,6 +199,28 @@ level its profile was measured against. Everything that changes level sits above
 loudness, because loudness measures what it is handed. The limiter is last,
 because it is the safety net.
 
+> **Correction, 2026-08-19, by ticket 008, which built this.**
+>
+> **Simple view does not sort into this order. It uses an explicit stack, and
+> with both switches on that stack is not canonical.**
+>
+> The old pipeline ran `normalize → compress → normalize → limit`. The first
+> normalize is not redundant: it is **input gain staging**. It lifts a quiet
+> recording up to the compressor's −8 dB threshold so the compressor engages at
+> all. Sort that stack into canonical order and the compressor moves in front of
+> the normalization, so on a quiet file "Apply Post Processing? Yes" does
+> nothing audible. That is a loss of function, and ticket 008's fifth
+> requirement forbids it.
+>
+> **The canonical order has no level-setting slot before the compressor.** It
+> cannot express this stack. The order above is still what "Reset order" gives an
+> Advanced user, and `sortToCanonical` still implements it. Simple view's four
+> stacks are in `simpleStack`, in `src/lib/edit-stack.ts`, with a test each.
+>
+> Adding a slot — a second `gain` position, or letting `peakNormalization` sit
+> anywhere — is a design change, not a build decision, so ticket 008 did not make
+> it. It is on the map's fog.
+
 **Nothing is pinned, and nothing is warned about.** An Advanced user may put the
 limiter first and clip their own export. That was decided in grilling: the
 operating assumption for Advanced view is that the user knows what they are
@@ -296,6 +318,38 @@ A small progress worklet always sits at the tail of the graph. It counts blocks
 and posts the count through its port. That is how a long render reports
 progress, which ticket 007 listed as an open problem needing chunked rendering.
 It does not.
+
+> **Correction, 2026-08-19, by ticket 008, which built this.**
+>
+> **The worklet works and it leaks. Progress is `suspend(time)` and `resume()`.**
+>
+> This section is right that a worklet *can* report progress from inside an
+> offline render — that was measured, and it was measured again. What was never
+> measured is what it costs. Thirty renders of `clip-30s.wav`, 302.8 MB of
+> output, RSS from `/proc` with a CDP collection before each reading:
+>
+> | | RSS growth | ms per render |
+> |---|---|---|
+> | no progress | +10.3 MB | 61.0 |
+> | worklet | **+322.8 MB** | 80.6 |
+> | worklet, port closed and node disconnected | **+316.4 MB** | — |
+> | `suspend()` and `resume()` | **−4.3 MB** | 63.8 |
+>
+> Closing the `MessagePort` did not help, so the port was not the root. Calling
+> `audioWorklet.addModule` on an `OfflineAudioContext` **keeps that context
+> alive**, and the context holds the buffer it just rendered. There is no way to
+> release it: `OfflineAudioContext` has no `close()`, and its state already reads
+> `"closed"` when rendering finishes.
+>
+> The next section calls `suspend(time)` awkward. It is — for **cancellation**,
+> which is what that sentence is about. For progress it is nineteen promises and
+> a `resume()`, and it leaves nothing behind. See `scheduleProgress` in
+> [`src/lib/render.ts`](../../src/lib/render.ts).
+>
+> **This does not touch the other three worklets.** Noise reduction, time and
+> pitch, and loudness measurement still need one, and each renders once per
+> export rather than once per progress bar. Whichever ticket builds them owns
+> this measurement.
 
 ### Cancellation is not solved here
 

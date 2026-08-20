@@ -1,8 +1,8 @@
 # 018 — Export blob URLs are never revoked
 
 **Type:** `wayfinder:task`
-**Status:** open
-**Assignee:** _unclaimed_
+**Status:** closed
+**Assignee:** claude
 **Blocked by:** none
 **Blocks:** _none_
 **Map:** [Simple view and Advanced view](../map.md)
@@ -97,3 +97,72 @@ ceiling is not.
 Exporting ten files three times releases what it allocates. Proved the way
 ticket 015 proved it: Chromium RSS read from `/proc`, garbage collected through
 CDP before each reading.
+
+---
+
+## Resolution — 2026-08-19
+
+**Fixed, inside [008 — Build the edit stack](./008-build-the-edit-stack.md).**
+
+This ticket said ticket 008 would rewrite both leaking files, so fixing them
+twice was waste. That is what happened, and the answer is **option 3**: do not
+make a URL for an intermediate output at all.
+
+### What changed
+
+| Was | Now |
+|---|---|
+| `audio-worker.ts:28` made a URL per file | the worker returns a `Blob` |
+| `audio-service.ts:126` made a URL for the zip | `sliceAllFilesIntoZip` returns a `Blob` |
+| the zip URL was handed to a click and forgotten | `download.ts` makes it and revokes it |
+| `AudioEditor` did the same with its own output | the same `download.ts` |
+
+`src/lib/download.ts` is now **the only place in the app that creates an export
+blob URL**, and it revokes every one it creates, one second after the click. A
+`Blob` crosses `postMessage` by reference, so returning one costs nothing and
+leaves nothing to revoke.
+
+Option 3 was the one this ticket warned to weigh, because
+`designs/worker-boundary.md` section 2 had just settled on returning a `url`.
+That design is amended, dated, with the reason.
+
+### Acceptance
+
+Met, and by a wider margin than asked. Playwright Chromium tree RSS from
+`/proc`, garbage collected through CDP before each reading — ticket 015's method.
+
+Thirty renders **and** three ten-file exports, producing 158.8 MB of zips and
+158.8 MB of slices:
+
+| | |
+|---|---|
+| RSS before | 792.6 MB |
+| RSS after | **784.5 MB** |
+| Blob URLs created by the export path | **0** |
+| Blob URLs still live | **0** |
+
+Counted directly, by replacing `URL.createObjectURL` and `URL.revokeObjectURL`
+in the page. Zero is a stronger answer than a balanced RSS reading: there is no
+URL to leak, so there is no timing to get wrong.
+
+### The control that makes those numbers mean something
+
+RSS alone proves little — Chromium does not return freed pages promptly, and
+`HeapProfiler.collectGarbage` is what makes a reading comparable. So six exports
+were run again with every zip **deliberately** held by an unrevoked URL:
+
+| | |
+|---|---|
+| Six zips held, 317.5 MB | 2355.6 MB |
+| The same six revoked, then collected | **2052.4 MB** |
+
+**303.2 MB released against 317.5 MB held.** A blob URL holds its file one for
+one, exactly as ticket 015 measured. That is what the export path no longer does.
+
+### One thing found while proving this
+
+Instrumenting `createObjectURL` showed 30 URLs on a three-round export — one per
+file per round, all 834 bytes of `text/javascript`. They were the progress
+worklet's module, and pulling that thread found a **322.8 MB leak** that had
+nothing to do with this ticket. It is written up in ticket 008 and in
+[`baselines.md`](../baselines.md).
