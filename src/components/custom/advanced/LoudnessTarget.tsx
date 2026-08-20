@@ -5,21 +5,34 @@ import { LOUDNESS_TARGET_RANGE } from "@/lib/edit-stack";
 import { countRender } from "@/lib/render-count";
 
 /**
- * The loudness target, in LUFS. Advanced view only.
+ * The **master** loudness target, in LUFS. Advanced view only.
  *
- * Ticket 010's rule is that **Simple view gains no new control**. Simple keeps
- * one Yes/No switch and this number underneath it, at −14 LUFS. Advanced view
- * gets to move it.
+ * ## Why it is on the toolbar and not on a card
  *
- * It is a **master default**, not a per-track setting: one number for the whole
- * export, which is the only way a batch of tracks can come out sounding equally
- * loud. That is what the switch is for.
+ * It used to sit at the top of a track card's Sound section, and ticket 027 put
+ * a Loudness block in that same card's signal chain. Two targets on one screen
+ * is one too many, and the user said so.
  *
- * **Advanced only, and therefore lazy-loaded.** It is reached through
- * `AdvancedPanel`, which `AudioEditor` imports dynamically, so a Simple view
- * user never downloads it. Standing rule 6.
+ * They are not the same number, which is exactly why only one of them belongs
+ * here:
+ *
+ * | Control | Sets | For |
+ * |---|---|---|
+ * | this one, on the toolbar | the master default | every track that has not claimed its own chain |
+ * | the Loudness block, in the chain | that track's own target | one track |
+ *
+ * A master default belongs beside the other master defaults, next to the switch
+ * that turns it on. Deleting it instead would have cost the one thing it is for:
+ * bringing a **batch** of tracks to one loudness in a single action.
+ *
+ * Ticket 010's rule still holds — **Simple view gains no new control.** Simple
+ * keeps one Yes/No switch and this number underneath it at −14 LUFS, unseen.
+ *
+ * **Advanced only, and therefore lazy-loaded.** `MasterToolbar` is in Simple
+ * view's bundle, so this is reached through a dynamic import and needs a default
+ * export. Standing rule 6.
  */
-export function LoudnessTarget() {
+export default function LoudnessTarget() {
   if (import.meta.env.DEV) countRender("LoudnessTarget");
 
   const normalizeAudio = useAudioStore((state) => state.normalizeAudio);
@@ -27,10 +40,12 @@ export function LoudnessTarget() {
   const setTarget = useAudioStore((state) => state.setLoudnessTargetLufs);
 
   return (
-    <div className="flex flex-col gap-2 py-2">
-      <Label className="flex items-baseline justify-between gap-4">
-        <span>Loudness target</span>
-        <code className="text-primary">{target.toFixed(0)} LUFS</code>
+    <div className="flex flex-col gap-1.5 pt-1">
+      <Label className="flex items-baseline justify-between gap-2 text-xs font-normal text-muted-foreground">
+        <span>Target for every track</span>
+        <code className={normalizeAudio ? "text-primary" : "text-muted-foreground"}>
+          {target.toFixed(0)} LUFS
+        </code>
       </Label>
 
       <Slider
@@ -39,23 +54,8 @@ export function LoudnessTarget() {
         max={LOUDNESS_TARGET_RANGE.max}
         step={1}
         onValueChange={([value]) => setTarget(value)}
-        aria-label="Loudness target in LUFS"
+        aria-label="Master loudness target in LUFS"
       />
-
-      <p className="text-xs text-muted-foreground">
-        {normalizeAudio ? (
-          <>
-            How loud every exported file is made. −14 LUFS is what Spotify
-            publishes; −23 LUFS is broadcast. Peaks are held below −1 dBTP, so a
-            very peaky track may come out quieter than the target rather than
-            clip.
-          </>
-        ) : (
-          <>
-            Not in use. Turn <b>Normalize Levels</b> on to apply it.
-          </>
-        )}
-      </p>
     </div>
   );
 }

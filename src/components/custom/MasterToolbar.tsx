@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -30,6 +30,15 @@ import { DownloadIcon, QuestionMarkCircledIcon, ReloadIcon } from "@radix-ui/rea
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useEffectiveView } from "@/hooks/useEffectiveView";
 import { countRender } from "@/lib/render-count";
+
+/**
+ * The master loudness target, under the switch that turns it on.
+ *
+ * A dynamic import, so a Simple view user never downloads it — this toolbar is
+ * in Simple view's bundle and the target is Advanced only. Standing rule 6, the
+ * same treatment `RegionMagnet` gets.
+ */
+const LoudnessTarget = lazy(() => import("./advanced/LoudnessTarget"));
 
 const MasterToolbar = () => {
   if (import.meta.env.DEV) countRender("MasterToolbar");
@@ -121,6 +130,19 @@ const MasterToolbar = () => {
                 <SelectItem value={"false"}>No</SelectItem>
               </SelectContent>
             </Select>
+
+            {/*
+              Advanced view only. The switch decides **whether** to normalize;
+              this decides **to what**. They belong together, and a target that
+              lived on a track card would say one track when it means every
+              track — which is what the Sound section's own Loudness block is
+              for.
+            */}
+            {view === "advanced" && (
+              <Suspense fallback={null}>
+                <LoudnessTarget />
+              </Suspense>
+            )}
           </div>
 
           <div className="flex flex-col w-full space-y-2">

@@ -137,6 +137,46 @@ export function rmsDbWindows(
 }
 
 /**
+ * The loudest sample in one window of one channel, as linear amplitude.
+ *
+ * `maxAmplitude` answers the same question for a whole decoded file. This takes
+ * a single `Float32Array` because that is what an `AnalyserNode` hands back, and
+ * a meter asks sixty times a second.
+ *
+ * Here rather than in `meter.ts` for a bundle reason, not a tidiness one. The
+ * preview path calls these two, and the preview path is in Simple view's
+ * bundle — so a `meter.ts` that held them would drag the meter ballistics, the
+ * meter scale and the meter formatting in with them. Standing rule 6.
+ */
+export function peakOf(samples: Float32Array): number {
+  let peak = 0;
+  for (let index = 0; index < samples.length; index++) {
+    const value = Math.abs(samples[index]);
+    if (value > peak) peak = value;
+  }
+  return peak;
+}
+
+/**
+ * The root mean square of one window of one channel, as linear amplitude.
+ *
+ * `rmsDbWindows` answers the same question across a whole file, in decibels and
+ * across every channel. This is the single-window form a meter reads.
+ *
+ * An empty window is 0, not `NaN`: an analyser can be read before any audio has
+ * reached it, and a meter must draw an empty bar rather than nothing at all.
+ */
+export function rmsOf(samples: Float32Array): number {
+  if (samples.length === 0) return 0;
+
+  let sum = 0;
+  for (let index = 0; index < samples.length; index++) {
+    sum += samples[index] * samples[index];
+  }
+  return Math.sqrt(sum / samples.length);
+}
+
+/**
  * How many frames a region occupies at a given sample rate.
  *
  * Rounded, not truncated. `createBuffer` in the old trimmer took

@@ -62,9 +62,16 @@ export function countAdvancedSettings(
   // Simple view could describe".
   if (isAdvancedExportChoice(exportChoice)) count += 1;
 
-  // Ticket 002 names the operation set, so non-default and Advanced-only
-  // operations cannot be counted yet.
-  // Ticket 009 adds per-track overrides, so those cannot be counted yet.
+  // A track with a stack of its own. **One in total**, not one per track and
+  // not one per operation: a project with an EQ on every track still reads
+  // "1 Advanced setting active", because it is still one sentence.
+  //
+  // The test is `stack !== undefined`, not a comparison against `simpleStack`.
+  // A track only gets a stack when Advanced view's signal chain gives it one,
+  // and a stack that happens to match the master defaults today would stop
+  // matching the moment the user changes a master switch — the track would keep
+  // its own copy and Simple view would not say so.
+  if (tracks.some((track) => track.stack !== undefined)) count += 1;
 
   return count;
 }

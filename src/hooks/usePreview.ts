@@ -8,7 +8,10 @@ import {
 } from "@/stores/audio-store";
 import type { EditorTrack } from "@/stores/audio-store";
 import { EditStack, needsMeasurement } from "@/lib/edit-stack";
+import { compressorSettingsIn } from "@/lib/graph";
+import { calibrateAll } from "@/lib/compressor-calibration";
 import {
+  MeterSource,
   PreviewGraph,
   attachPreview,
   measuresUnasked,
@@ -42,6 +45,16 @@ export type PreviewState = {
   tooLongToMeasure: boolean;
   /** Measures now, whatever the length. What "Measure anyway" calls. */
   measureNow: () => void;
+
+  /**
+   * Where this card's meters read from.
+   *
+   * One object for the life of the card, so passing it to a meter never makes
+   * that meter redraw. The meters are read on an animation frame and never on a
+   * render — ticket 020's rule, held: the level changes 60 times a second and
+   * React must not hear about any of them.
+   */
+  meters: MeterSource;
 };
 
 /**
@@ -70,6 +83,13 @@ export function usePreview(
   const graph = useRef<PreviewGraph | null>(null);
   const applied = useRef<string>("");
   const measuring = useRef(false);
+
+  // Made once and never replaced. It asks the ref rather than closing over the
+  // graph, so it survives every rebuild of the graph behind it.
+  const meters = useRef<MeterSource>();
+  if (!meters.current) {
+    meters.current = { read: (into) => graph.current?.readMeters(into) ?? false };
+  }
 
   const [measured, setMeasured] = useState<ReadonlyMap<number, number> | null>(
     null
@@ -129,11 +149,34 @@ export function usePreview(
     if (signature === applied.current) return;
     applied.current = signature;
 
-    graph.current.update({
+    const plan = {
       region,
       stack,
       measured: measured ?? new Map(),
       effects,
+    };
+
+    graph.current.update(plan);
+
+    // **Calibrate, then build again.**
+    //
+    // `compressorSegment` divides out the makeup gain Chromium adds on its own
+    // — a constant +0.541 dB for the limiter's settings. `makeupGain` is
+    // synchronous and answers 1 for settings nobody has measured, so the
+    // measurement has to have happened first.
+    //
+    // `render.ts` calls `calibrateAll` and preview never did. The limiter is
+    // unconditional, so **every** preview played 0.541 dB louder than the file
+    // it was previewing — and quietly stopped doing so after the first export,
+    // because the cache is shared. ADR 0001 promises the two agree; this is
+    // what makes that true for the one node that measures itself.
+    //
+    // Found by the output meter, on a 1 kHz tone, in the first minute of
+    // having one. It is inaudible and it was never going to be found by ear.
+    void calibrateAll(compressorSettingsIn(stack)).then(() => {
+      // A newer plan may have landed while the offline render ran. Rebuilding
+      // from this one would put the graph back to a stack the user has left.
+      if (applied.current === signature) graph.current?.update(plan);
     });
   }, [region, currentStack, track?.previewEffects, measured]);
 
@@ -213,5 +256,6 @@ export function usePreview(
     awaitingMeasurement: wanted && measured === null,
     tooLongToMeasure: region ? !measuresUnasked(region) : false,
     measureNow: () => void measure(true),
+    meters: meters.current,
   };
 }

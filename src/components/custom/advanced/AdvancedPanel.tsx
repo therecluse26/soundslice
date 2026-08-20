@@ -4,17 +4,23 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { LoudnessTarget } from "./LoudnessTarget";
+import { MeterSource } from "@/lib/preview";
 import { ExportOptions } from "./ExportOptions";
+import { SignalChain } from "./SignalChain";
 
 /**
  * The Advanced view panel on a track card.
  *
- * **Two sections now, not three.** The map's vision is tracks in, regions cut,
+ * **Two sections, not three.** The map's vision is tracks in, regions cut,
  * files out — and *regions cut* left this panel. Everything about a region is on
  * the waveform: the tools in a strip above it, and a region's own gain, fades
  * and name drawn on the region itself. A panel below the card asked the user to
  * look away from the thing they were cutting.
+ *
+ * **Sound is a chain, not a form.** It was a slider and a note saying the rest
+ * was not built. It is now the edit stack drawn in the order the audio passes
+ * through it, with a live input and output meter at each end and a graphical
+ * control for every block that has a shape. See `SignalChain`.
  *
  * Both sections start closed, so Advanced view opens looking almost identical to
  * Simple view.
@@ -26,17 +32,25 @@ import { ExportOptions } from "./ExportOptions";
  *
  * It must have a default export, because `React.lazy` requires one.
  */
-export default function AdvancedPanel() {
+export default function AdvancedPanel({
+  fileName,
+  meters,
+}: {
+  fileName: string;
+  meters: MeterSource;
+}) {
   return (
     <Accordion type="multiple" className="w-full">
       <AccordionItem value="sound">
         <AccordionTrigger>Sound</AccordionTrigger>
         <AccordionContent>
-          <LoudnessTarget />
-          <EmptySection
-            what="EQ, compressor, noise reduction, and time and pitch."
-            ticket="the Sound feature tickets"
-          />
+          {/*
+            The chain and nothing else. A master loudness target used to sit
+            above it, and the chain's own Loudness block made that two targets
+            on one screen. The master one belongs with the other master
+            defaults — it is on the toolbar now. See `LoudnessTarget`.
+          */}
+          <SignalChain fileName={fileName} meters={meters} />
         </AccordionContent>
       </AccordionItem>
 
@@ -44,20 +58,12 @@ export default function AdvancedPanel() {
         <AccordionTrigger>Export</AccordionTrigger>
         <AccordionContent>
           <ExportOptions />
-          <EmptySection
-            what="One joined file, with crossfades between regions."
-            ticket="the join strip's own ticket"
-          />
+          <p className="text-xs text-muted-foreground">
+            One joined file, with crossfades between regions. Not built yet — the
+            join strip's own ticket.
+          </p>
         </AccordionContent>
       </AccordionItem>
     </Accordion>
-  );
-}
-
-function EmptySection({ what, ticket }: { what: string; ticket: string }) {
-  return (
-    <p className="text-xs text-muted-foreground">
-      {what} Not built yet — {ticket}.
-    </p>
   );
 }

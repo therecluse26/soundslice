@@ -262,6 +262,24 @@ interface AudioState {
   silenceSettings: SilenceSettings | null;
   setSilenceSettings: (settings: SilenceSettings) => void;
 
+  /**
+   * Gives this track a stack of its own, as one gesture.
+   *
+   * `undefined` gives the track back to the master defaults, which is what
+   * "Reset to Simple" does. There is no in-between: a track either says what it
+   * sounds like or it inherits, which is ticket 003's override model.
+   *
+   * On the command history, because a dragged EQ point is a gesture like a
+   * dragged region edge, and Ctrl+Z must not skip past it to a region edit the
+   * user made two minutes ago. `coalesceKey` makes one drag one entry, exactly
+   * as it does for a region.
+   */
+  setTrackStack: (
+    fileName: string,
+    stack: EditStack | undefined,
+    options?: RegionEditOptions
+  ) => void;
+
   /** Turns this track's **Preview effects** switch on or off. */
   setTrackPreviewEffects: (fileName: string, effects: boolean) => void;
 
@@ -352,23 +370,41 @@ export const useAudioStore = create<AudioState>((set, get) => {
    */
   const editTrack = (
     fileName: string,
-    mutate: (track: EditorTrack) => Pick<EditorTrack, "regions" | "selectedRegionId">,
+    mutate: (
+      track: EditorTrack
+    ) => Partial<Pick<EditorTrack, "regions" | "selectedRegionId" | "stack">>,
     options: RegionEditOptions = {}
   ) => {
     const track = get().tracks.find((t) => t.file.name === fileName);
     if (!track) return;
 
-    const before = snapshotTrack(fileName, track.regions, track.selectedRegionId);
-    const next = mutate(track);
+    const before = snapshotTrack(
+      fileName,
+      track.regions,
+      track.selectedRegionId,
+      track.stack
+    );
+
+    // Whatever `mutate` did not name is carried over unchanged. Without this a
+    // region drag would write `stack: undefined` and throw the track's EQ away,
+    // because the snapshot the store applies is the whole of the track's
+    // editable state and not a patch.
+    const changed = mutate(track);
+    const after = snapshotTrack(
+      fileName,
+      changed.regions ?? track.regions,
+      "selectedRegionId" in changed ? changed.selectedRegionId : track.selectedRegionId,
+      "stack" in changed ? changed.stack : track.stack
+    );
 
     applyToTracks(
-      [{ fileName, regions: next.regions, selectedRegionId: next.selectedRegionId }],
+      [after],
       options.silent
         ? undefined
         : {
             label: options.label ?? "Edit regions",
             before: [before],
-            after: [snapshotTrack(fileName, next.regions, next.selectedRegionId)],
+            after: [after],
             coalesceKey: options.coalesceKey,
           }
     );
@@ -389,6 +425,7 @@ export const useAudioStore = create<AudioState>((set, get) => {
         ...track,
         regions: snap.regions,
         selectedRegionId: snap.selectedRegionId,
+        stack: snap.stack,
       };
     });
 
@@ -613,6 +650,17 @@ export const useAudioStore = create<AudioState>((set, get) => {
     setSilenceSettings: (silenceSettings: SilenceSettings) =>
       set({ silenceSettings }),
 
+    setTrackStack: (
+      fileName: string,
+      stack: EditStack | undefined,
+      options: RegionEditOptions = {}
+    ) => {
+      editTrack(fileName, () => ({ stack }), {
+        label: "Change sound",
+        ...options,
+      });
+    },
+
     setTrackPreviewEffects: (fileName: string, previewEffects: boolean) => {
       set({
         tracks: get().tracks.map((track) =>
@@ -735,6 +783,22 @@ export function masterExportSettings(): ExportSettings {
     bitDepth,
     outputSampleRate: outputSampleRate ?? undefined,
   };
+}
+
+
+/**
+ * The store, on `window`, in development builds only.
+ *
+ * `import.meta.env.DEV` is a compile-time constant, so this block is removed
+ * from the production bundle rather than skipped at runtime — the same rule
+ * `__previewElements` and `__renderCounts` follow.
+ *
+ * It exists because the only honest way to check a gesture is to drive it with
+ * real pointer events and then read the numbers it actually wrote. Reading them
+ * off the screen tests the formatting; reading them from here tests the edit.
+ */
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__audioStore = useAudioStore;
 }
 
 function refusalMessage(refused: SizedFile[], kept: SizedFile[]): string {

@@ -120,6 +120,36 @@ The ordered list of gestures, kept so any of them can be reversed. One for the
 whole project, not one per track.
 _Avoid_: undo stack, journal, log
 
+**Signal chain**:
+The edit stack drawn as the path the audio takes, left to right, with a block
+for each operation. It is a picture of the stack, not a second thing.
+_Avoid_: rack, pipeline, routing
+
+**Block**:
+One operation in the signal chain, drawn as a tile. A block is switched on or
+off, and opening it shows that operation's own control.
+_Avoid_: node, module, slot, plugin
+
+**Meter**:
+A bar showing how loud the audio is right now. The bar is the average level and
+the line above it is the loudest recent moment.
+_Avoid_: VU, level indicator, scope
+
+**Input meter**:
+The meter at the start of the signal chain. It shows the region, with its own
+gain and fades, before any operation. Elsewhere this is called dry.
+_Avoid_: source meter, pre meter
+
+**Output meter**:
+The meter at the end of the signal chain. It shows what reaches the speakers,
+and what an exported file will hold. Elsewhere this is called wet.
+_Avoid_: master meter, post meter
+
+**Clip**:
+A sample that reaches or passes full scale. The meter warns about it, and the
+warning stays lit after the sound has gone.
+_Avoid_: overload, peak (unqualified), distortion
+
 **Envelope**:
 A setting whose value changes across a track, instead of holding one value.
 Not built. This is the answer for per-moment control, so that regions never

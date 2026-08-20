@@ -74,6 +74,33 @@ default. `prototype` for UI tickets. `research` for external API tickets.
 | Deploy | Manual `workflow_dispatch`. No feature flags. |
 | Batch export | Kept in Advanced. Per-track settings override master defaults. |
 | Ticket shape | Shared engine decisions first, then decide-then-build per feature. |
+| Package manager | **pnpm, and only pnpm.** See the warning below. |
+
+> **Never run `npm` or `npx` in this repo. Use `pnpm exec`.**
+>
+> The repo carries **two** lockfiles and they disagree: `pnpm-lock.yaml`
+> pins `wavesurfer.js` at **7.8.9**, and the tracked `package-lock.json`
+> pins **7.8.6**. Any npm command replaces pnpm's symlink at
+> `node_modules/wavesurfer.js` with a real 7.8.6 folder.
+>
+> **`npx --no-install` does not save you.** It still loads npm's tree and
+> reconciles it against `package-lock.json`, rewriting
+> `node_modules/.package-lock.json` and the package with it. Measured:
+> `pnpm exec tsc --noEmit` left both untouched; `npx --no-install tsc
+> --noEmit` broke the link.
+>
+> It then fails as a compile error **in our own code**:
+> `AudioEditor.tsx … 'exponentialZooming' does not exist in type
+> 'ZoomPluginOptions'`. That option is real in 7.8.9 and absent in 7.8.6.
+> `pnpm install --frozen-lockfile` reports "Already up to date" and does
+> **not** repair it — the store still holds 7.8.9; only the link is wrong.
+>
+> Repair: `rm -rf node_modules/wavesurfer.js && ln -s
+> .pnpm/wavesurfer.js@7.8.9/node_modules/wavesurfer.js
+> node_modules/wavesurfer.js`.
+>
+> The real fix is deleting `package-lock.json`, which is tracked, so it
+> needs the repo owner's word.
 
 ### The Advanced view vision
 
@@ -469,11 +496,43 @@ chips that can be reordered, with draggable crossfades between them.
   Simple bundle 114.35 → **117.98 KiB gzip** across all six tickets, and no
   Advanced code is in it.
 
+- [027 — The signal chain and the meters](./tickets/027-the-signal-chain-and-meters.md)
+  — **built. The Sound section is the edit stack drawn in order, with a live
+  meter at each end.** One block per operation, left to right, and `BLOCKS` is
+  `CANONICAL_ORDER` with a test to keep it so. **EQ and compressor are wired for
+  real** — a dragged curve changes what you hear and what you export, and both
+  curves reproduce the Web Audio node's own formula rather than an approximation.
+  Web Audio reads `Q` three different ways and the test pins the tell: a low pass
+  reads exactly `Q` decibels at its own cutoff. The meters tap **in** the audio
+  path, dry after the region's gain and fades and wet at the tail — the same cut
+  "Preview effects: off" makes. Nothing about a meter is React state: **0**
+  renders across 181 frames of playback, at **0.062 ms** a frame. Undo now covers
+  the sound; one drag is one entry. **The meters found a real defect in their
+  first minute** — preview never called `calibrateAll`, so every preview played
+  **0.541 dB** louder than the file it was previewing, and quietly stopped after
+  the first export because the cache is shared. Fixed and measured: a four-block
+  chain previews at −6.2 and exports at **−6.19**. Simple bundle 117.98 →
+  **120.26 KiB gzip**, all of it shared-path code. **Amended the same day, after
+  seeing it:** the master loudness target left the card. Two targets on one
+  screen was one too many, and the two are not the same number — the master one
+  is for every track that has not claimed a chain, so it now sits on the master
+  toolbar under the switch that turns it on, Advanced view only and lazy-loaded.
+  **Amended again:** each block's on/off went from a 2-pixel dot to the app's own
+  `Switch`, at 36 × 20 px — eleven times the hit target, and a shape that says
+  which way it is set. No bundle cost; `PreviewEffects` had already put that
+  component in Simple view's bundle.
+
 ## Not yet specified
 
-- Advanced panel layout for the **Sound and Export** sections. The Regions
-  section is settled and built: it holds the region **tools**, and the per-track
-  region **list** lives on the card (tickets 022 and 025).
+- Advanced panel layout for the **Export** section. It is still a form. The
+  Sound section is settled and built as a signal chain (ticket 027), and the
+  Regions section left the panel entirely — the tools are a strip above the
+  waveform and a region's own controls are drawn on the region (tickets 022,
+  025).
+- **Reordering the signal chain.** Ticket 027 draws the blocks in canonical
+  order and they cannot be dragged. The hole below has to be filled first: the
+  canonical order cannot express Simple view's own stack, so "reset order" has
+  nothing correct to reset to.
 - **What else undo covers.** The command history built in ticket 024 records
   region gestures and nothing else. Adding a file, removing a track and changing a
   master default are not undoable, and "Clear Advanced settings" — the gesture the

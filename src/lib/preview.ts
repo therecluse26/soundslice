@@ -40,6 +40,12 @@
 import { EditStack, Region, needsMeasurement } from "./edit-stack";
 import { linkStack, scheduleRegionEnvelope } from "./graph";
 import { sharedAudioContext } from "./audio-context";
+// `import type` for the frame shape, and the two functions from `dsp.ts`.
+// A value import from `meter.ts` would pull the meter ballistics, scale and
+// formatting into Simple view's bundle, which never draws a meter.
+// Standing rule 6.
+import type { MeterFrame } from "./meter";
+import { peakOf, rmsOf } from "./dsp";
 
 /**
  * The longest track preview will measure by itself, in seconds.
@@ -89,6 +95,40 @@ export type PreviewPlan = {
   effects: boolean;
 };
 
+/**
+ * How many samples each meter read covers.
+ *
+ * 2048 samples is 42.7 ms at 48 kHz, and a frame at 60 Hz is 16.7 ms — so every
+ * window overlaps the last one and no peak can fall between two reads. A window
+ * shorter than a frame would drop samples on the floor and the meter would
+ * under-read exactly the transients it exists to show.
+ */
+export const METER_WINDOW = 2048;
+
+/** One read of both taps. Linear amplitude, filled in place. */
+export type MeterReading = {
+  input: MeterFrame;
+  output: MeterFrame;
+};
+
+/** A reading with nothing in it, for a caller to hand to `readMeters`. */
+export function emptyReading(): MeterReading {
+  return { input: { rms: 0, peak: 0 }, output: { rms: 0, peak: 0 } };
+}
+
+/**
+ * Somewhere a meter can read from, without knowing which graph it belongs to.
+ *
+ * A card's graph is rebuilt whenever its media element changes, and a meter
+ * that held the graph itself would hold a dead one. This is handed down instead
+ * — one object, made once, that always asks the card's current graph. Its
+ * identity never changes, so a meter component never redraws because of it.
+ */
+export type MeterSource = {
+  /** True when it read something. False when the card is not playing. */
+  read: (into: MeterReading) => boolean;
+};
+
 export type PreviewGraph = {
   /**
    * Rebuilds the chain for a new plan. Safe to call while playing.
@@ -97,6 +137,19 @@ export type PreviewGraph = {
    * a slider moved during playback is heard at once.
    */
   update: (plan: PreviewPlan) => void;
+
+  /**
+   * Fills `into` with what the two taps hear right now.
+   *
+   * **Returns false when the element is paused**, and reads nothing at all in
+   * that case. A card that is not playing then costs the meter loop two boolean
+   * checks a frame instead of two 8 KB copies.
+   *
+   * Written in place, into a caller-owned object, because this is called every
+   * frame for every card on screen and an object per frame is garbage the
+   * collector would come back for mid-playback.
+   */
+  readMeters: (into: MeterReading) => boolean;
 
   /**
    * Writes the region envelope for playback resuming at `positionSec`.
@@ -148,21 +201,86 @@ export function attachPreview(element: HTMLMediaElement): PreviewGraph {
   const envelope = context.createGain();
   source.connect(envelope);
 
+  // **The two taps, and they sit in the path.**
+  //
+  // An `AnalyserNode` passes its input through untouched, so putting them in
+  // the chain rather than hanging them off it costs nothing and settles a
+  // question that would otherwise need trusting: a node with no route to the
+  // destination is not guaranteed to be pulled, and a meter that read zeros on
+  // one browser and not another would be worse than no meter.
+  //
+  // Where they sit is the whole meaning of the pair:
+  //
+  // ```
+  //   source ─▶ envelope ─▶ [input] ─▶ the stack ─▶ [output] ─▶ speakers
+  //                          dry                     wet
+  // ```
+  //
+  // **Dry is after the region's own gain and fades, before the track's stack.**
+  // That is exactly where "Preview effects: off" cuts, so the two meters
+  // measure the stack and nothing else. Tapping the source instead would fold
+  // the region's gain into the difference and the pair would stop answering
+  // "what is my chain doing".
+  //
+  // **Simple view carries them too, and nobody reads them.** Only Advanced view
+  // draws a meter, so in Simple view these two nodes pass audio through and are
+  // never asked what they heard. The cost is one 128-sample copy per node per
+  // render quantum on the audio thread. Taking them out for Simple view would
+  // mean rebuilding the chain on every view switch — a glitch in the sound, to
+  // save a memcpy — so they stay.
+  const inputTap = context.createAnalyser();
+  const outputTap = context.createAnalyser();
+  inputTap.fftSize = METER_WINDOW;
+  outputTap.fftSize = METER_WINDOW;
+
+  envelope.connect(inputTap);
+
+  // One buffer per tap, for the life of the card. `getFloatTimeDomainData`
+  // writes into what it is given, so nothing is allocated per frame.
+  const inputWindow = new Float32Array(METER_WINDOW);
+  const outputWindow = new Float32Array(METER_WINDOW);
+
   let tail: AudioNode | null = null;
 
   const update = (plan: PreviewPlan) => {
-    // Disconnect the envelope's outputs only. Everything downstream is
+    // Restores the head of the chain after a `dispose`, and does nothing at all
+    // otherwise: Web Audio ignores a second `connect` between the same two
+    // ends, so this cannot double the level. React StrictMode disposes and
+    // re-attaches on every mount, and `attachPreview` hands back the same graph
+    // — without this line that second life would be silent.
+    envelope.connect(inputTap);
+
+    // Disconnect the input tap's outputs only. Everything downstream is
     // unreachable after that and the collector takes it.
-    envelope.disconnect();
+    inputTap.disconnect();
     tail?.disconnect();
 
     tail = linkStack(
       context,
-      envelope,
+      inputTap,
       plan.effects ? usablePlan(plan.stack, plan.measured) : EMPTY_PLAN
     );
 
-    tail.connect(context.destination);
+    tail.connect(outputTap);
+
+    // Idempotent: `disconnect` first, so a rebuild cannot route the same node
+    // to the destination twice and double the level.
+    outputTap.disconnect();
+    outputTap.connect(context.destination);
+  };
+
+  const readMeters = (into: MeterReading): boolean => {
+    // Paused is the common case for a card that is on screen and not playing.
+    // Answering it here keeps two 8 KB copies a frame off the main thread.
+    if (element.paused) return false;
+
+    inputTap.getFloatTimeDomainData(inputWindow);
+    outputTap.getFloatTimeDomainData(outputWindow);
+
+    fill(into.input, inputWindow);
+    fill(into.output, outputWindow);
+
+    return true;
   };
 
   const schedule = (region: Region, positionSec: number) => {
@@ -177,11 +295,13 @@ export function attachPreview(element: HTMLMediaElement): PreviewGraph {
 
   const dispose = () => {
     envelope.disconnect();
+    inputTap.disconnect();
+    outputTap.disconnect();
     tail?.disconnect();
     tail = null;
   };
 
-  const graph = { update, schedule, dispose };
+  const graph = { update, schedule, readMeters, dispose };
   (element as Routed)[ATTACHED] = graph;
 
   // Development builds only — `import.meta.env.DEV` is a compile-time constant,
@@ -212,6 +332,12 @@ export function attachPreview(element: HTMLMediaElement): PreviewGraph {
 export async function resumePreview(): Promise<void> {
   const context = sharedAudioContext();
   if (context.state === "suspended") await context.resume();
+}
+
+/** One window's numbers, written into a frame the caller already owns. */
+function fill(frame: MeterFrame, window: Float32Array): void {
+  frame.rms = rmsOf(window);
+  frame.peak = peakOf(window);
 }
 
 const EMPTY_PLAN = { stack: [] as EditStack, measured: new Map<number, number>() };

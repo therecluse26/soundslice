@@ -1004,3 +1004,69 @@ repair it — pnpm's store still held 7.8.9 and only the link into it was wrong.
 Recreating `node_modules/wavesurfer.js` as a symlink to
 `.pnpm/wavesurfer.js@7.8.9/node_modules/wavesurfer.js` fixed it. Worth knowing,
 because it will look like a compile error in our code the next time it happens.
+
+## Addendum — the signal chain and the meters, 2026-08-20
+
+Ticket 027. Measured in the running app, on a **12-second 1 kHz tone at exactly
+−20.00 dBFS peak, −23.01 dBFS RMS** — a signal whose every number is known in
+advance, so a meter that is wrong cannot look right.
+
+### The meters read the truth
+
+| What | Reading |
+|---|---|
+| Input meter, tone alone | **−23.0** |
+| The tone's actual RMS | −23.01 dBFS |
+| Output meter, EQ at +6.0 dB on 1 kHz | **+6.0** above input |
+| The exported file, same EQ | **−17.01 dBFS** — **+6.00** above the source |
+| Four blocks: EQ, compressor, +6 gain, limiter — preview | **−6.2** |
+| The same chain, exported and decoded | **−6.19 dBFS** |
+
+The last pair is the one that matters. The drawn curve, the meter and the bytes
+agree to a tenth of a decibel through a compressor.
+
+### A defect the meters found in their first minute
+
+| What | Before | After |
+|---|---|---|
+| Output meter, limiter only | −22.5 · **+0.5** | −23.0 · **+0.0** |
+
+`usePreview` never called `calibrateAll`, so `makeupGain` answered 1 and
+Chromium's own **+0.541 dB** limiter makeup was never divided out. The limiter is
+unconditional, so every preview was 0.541 dB loud — and stopped being so after
+the first export, because the calibration cache is shared. Inaudible, and never
+findable by ear.
+
+### Cost
+
+| What | Reading |
+|---|---|
+| Renders during playback | **0**, across 181 animation frames |
+| Meter loop, per frame | **0.062 ms** — 0.37% of a 60 Hz budget |
+| What that covers | 2 subscribers × 2 taps × 2048 samples, plus 4 canvas draws |
+| History entries per drag | **1** — from 12 pointer moves (EQ), 10 (compressor) |
+| Wavesurfer instances rebuilt | **0** |
+
+The loop reads nothing at all when the card is paused: `readMeters` answers
+`false` on `element.paused` before touching an analyser.
+
+### Bundle
+
+| Chunk | Before | After |
+|---|---|---|
+| Simple view `index` | 117.98 | **120.26 KiB gzip** |
+| `AdvancedPanel` | 4.22 | **10.28 KiB gzip** |
+| `meter-canvas` | — | 1.11 KiB gzip |
+| `ToolControls` | — | 1.01 KiB gzip |
+| `useMeterPair` | — | 0.61 KiB gzip |
+| `TransportMeters` | — | 0.44 KiB gzip |
+
+The 0.83 KiB Simple view gained is all shared-path code: the two taps in
+`preview.ts`, `peakOf` and `rmsOf` in `dsp.ts`, `setTrackStack` in the store, and
+the stack in the history snapshot. No Advanced-only string is in the Simple
+bundle — checked by searching the built chunk for `#22c55e`, `Equalizer`,
+`lowshelf`, `peaking` and `Signal chain`. All zero.
+
+`peakOf` and `rmsOf` are in `dsp.ts` rather than `meter.ts` **because of this
+measurement**: with them in `meter.ts` the Simple bundle read 120.48, because
+importing them dragged the ballistics, the scale and the formatting along.

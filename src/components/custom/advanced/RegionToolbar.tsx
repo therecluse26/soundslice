@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
   MagicWandIcon,
   PlusIcon,
   ReloadIcon,
   ScissorsIcon,
 } from "@radix-ui/react-icons";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
 import { useAudioStore } from "@/stores/audio-store";
 import {
   SILENCE_DEFAULTS,
@@ -16,6 +14,9 @@ import {
 import { splitTrackOnSilence } from "@/lib/region-tools";
 import { DEFAULT_FADE_MS, defaultRegion } from "@/lib/edit-stack";
 import { countRender } from "@/lib/render-count";
+// The three small controls live in one place now, so the region strip and the
+// signal chain cannot drift into looking like two different applications.
+import { Popover, ToolButton, ToolSlider } from "./ToolControls";
 
 /**
  * The region tools, as a strip above the waveform.
@@ -187,114 +188,6 @@ function SplitOnSilence({
         {DEFAULT_FADE_MS} ms fade ramps over silence instead of over the attack.
         <b> This replaces every region on this track.</b> Ctrl+Z puts them back.
       </p>
-    </div>
-  );
-}
-
-function ToolButton({
-  children,
-  pressed,
-  onClick,
-}: {
-  children: React.ReactNode;
-  pressed?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      onClick={onClick}
-      className={`flex h-7 items-center rounded border px-2 text-xs transition-colors ${
-        pressed
-          ? "border-primary bg-primary text-primary-foreground"
-          : "border-border bg-transparent text-foreground hover:border-primary"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ToolSlider({
-  label,
-  display,
-  value,
-  range,
-  onChange,
-}: {
-  label: string;
-  display: string;
-  value: number;
-  range: { min: number; max: number; step: number };
-  onChange: (value: number) => void;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <Label className="w-28 shrink-0 text-xs">{label}</Label>
-      <Slider
-        value={[value]}
-        min={range.min}
-        max={range.max}
-        step={range.step}
-        onValueChange={([next]) => onChange(next)}
-        aria-label={label}
-      />
-      <code className="w-16 shrink-0 text-right text-xs text-primary">
-        {display}
-      </code>
-    </div>
-  );
-}
-
-/**
- * A panel anchored under its trigger, closed by Escape or a click outside.
- *
- * Hand-written, and the reason is that this repo has no popover primitive and
- * one panel is not worth a dependency. `DropdownMenu` is installed and is the
- * wrong shape: a menu takes the keyboard for its own item navigation, and this
- * holds three sliders.
- */
-function Popover({
-  open,
-  onClose,
-  trigger,
-  children,
-}: {
-  open: boolean;
-  onClose: () => void;
-  trigger: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const anchor = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const outside = (event: MouseEvent) => {
-      if (!anchor.current?.contains(event.target as Node)) onClose();
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-
-    document.addEventListener("mousedown", outside);
-    document.addEventListener("keydown", escape);
-
-    return () => {
-      document.removeEventListener("mousedown", outside);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open, onClose]);
-
-  return (
-    <div ref={anchor} className="relative">
-      {trigger}
-      {open && (
-        <div className="absolute left-0 top-8 z-50 rounded border border-border bg-background p-3 shadow-lg">
-          {children}
-        </div>
-      )}
     </div>
   );
 }

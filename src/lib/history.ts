@@ -27,13 +27,24 @@
  * copy and stops there.
  */
 
-import { Region } from "./edit-stack";
+import { EditStack, Region } from "./edit-stack";
 
-/** One track's regions and its selection, at one moment. */
+/**
+ * One track's regions, its selection and its stack, at one moment.
+ *
+ * **The stack is in the snapshot, and every snapshot carries it.** A snapshot
+ * that held only regions would be a partial write: the store applies whatever
+ * the snapshot names, so a region gesture would put the stack back to
+ * `undefined` and an EQ would vanish on the next drag.
+ *
+ * `undefined` is a real value here — it means the track inherits the master
+ * defaults — so it round-trips like any other.
+ */
 export type TrackSnapshot = {
   fileName: string;
   regions: Region[];
   selectedRegionId?: string;
+  stack?: EditStack;
 };
 
 /** One gesture, and how to put it back. */
@@ -74,11 +85,19 @@ export const EMPTY_HISTORY: History = { past: [], future: [] };
  */
 export const HISTORY_DEPTH = 100;
 
-/** A copy of a track's regions that shares nothing with the live ones. */
+/**
+ * A copy of a track's editable state that shares nothing with the live one.
+ *
+ * Deep enough that undoing cannot be undone by a later edit writing through a
+ * shared object. Two levels matter: a region's `fade`, and an EQ's `bands`.
+ * Neither holds audio — the whole snapshot is numbers and short strings, and
+ * ticket 007's 1 GB ceiling must never start counting this.
+ */
 export function snapshotTrack(
   fileName: string,
   regions: readonly Region[],
-  selectedRegionId?: string
+  selectedRegionId?: string,
+  stack?: EditStack
 ): TrackSnapshot {
   return {
     fileName,
@@ -88,12 +107,38 @@ export function snapshotTrack(
       stretch: region.stretch ? { ...region.stretch } : undefined,
     })),
     selectedRegionId,
+    stack: stack?.map((operation) =>
+      operation.op === "eq"
+        ? { ...operation, bands: operation.bands.map((band) => ({ ...band })) }
+        : { ...operation }
+    ),
   };
 }
 
-/** True when these two snapshots describe the same regions in the same order. */
+/** True when these two snapshots describe the same state in the same order. */
 export function snapshotsEqual(a: TrackSnapshot[], b: TrackSnapshot[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return stableJson(a) === stableJson(b);
+}
+
+/**
+ * A snapshot as a string that can be compared, **without serialising audio**.
+ *
+ * A noise profile holds a `Float32Array` of magnitudes. `JSON.stringify` turns
+ * one of those into an object with a numbered key per bin — thousands of them,
+ * on every push, twice. A profile is immutable and already carries an `id`, so
+ * the id is the whole of its identity and that is what is compared.
+ *
+ * Nothing reaches this branch today: `graph.ts` throws on noise reduction and
+ * nothing makes a profile. It is here because the field is in the `Operation`
+ * union, and a comparison that quietly became a hundred times slower is exactly
+ * the kind of fault that never gets traced back to this line.
+ */
+function stableJson(snapshots: TrackSnapshot[]): string {
+  return JSON.stringify(snapshots, (key, value) =>
+    key === "profile" && value && typeof value === "object" && "id" in value
+      ? value.id
+      : value
+  );
 }
 
 /**
@@ -189,6 +234,9 @@ export function changedFileNames(entry: HistoryEntry): string[] {
   const after = new Map(entry.after.map((snap) => [snap.fileName, snap]));
 
   return entry.before
-    .filter((snap) => JSON.stringify(after.get(snap.fileName)) !== JSON.stringify(snap))
+    .filter((snap) => {
+      const other = after.get(snap.fileName);
+      return !other || !snapshotsEqual([snap], [other]);
+    })
     .map((snap) => snap.fileName);
 }

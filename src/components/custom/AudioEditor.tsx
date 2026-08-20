@@ -56,6 +56,15 @@ const AdvancedPanel = lazy(() => import("./advanced/AdvancedPanel"));
 const RegionToolbar = lazy(() => import("./advanced/RegionToolbar"));
 
 /**
+ * The input and output meters, beside the play button.
+ *
+ * Its own chunk rather than a part of `AdvancedPanel`, because it is on screen
+ * whenever an Advanced card is, and the panel is only downloaded when a section
+ * is opened. Advanced-only — standing rule 6.
+ */
+const TransportMeters = lazy(() => import("./advanced/TransportMeters"));
+
+/**
  * A region's gain, fades, name and delete — drawn **on the region**.
  *
  * It renders nothing itself. It hangs plain DOM on each wavesurfer region
@@ -793,6 +802,18 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                 {isPlaying.current ? <PauseIcon /> : <PlayIcon />}
               </Button>
 
+              {/*
+                Advanced view only, and beside the transport because that is
+                where you are looking while a track plays. Nothing here renders
+                per frame — the level is written onto a canvas from an animation
+                frame and never becomes React state. See `useMeterPair`.
+              */}
+              {view === "advanced" && (
+                <Suspense fallback={null}>
+                  <TransportMeters meters={preview.meters} />
+                </Suspense>
+              )}
+
               {downloading ? (
                 <Button
                   disabled
@@ -855,7 +876,7 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                 </p>
               }
             >
-              <AdvancedPanel />
+              <AdvancedPanel fileName={file.name} meters={preview.meters} />
             </Suspense>
           </div>
         )}
