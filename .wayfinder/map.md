@@ -372,7 +372,9 @@ chips that can be reordered, with draggable crossfades between them.
 
 ## Not yet specified
 
-- Advanced panel layout for the Regions, Sound and Export sections
+- Advanced panel layout for the **Sound and Export** sections. The Regions
+  section is settled: it holds the region **tools**, and the per-track region
+  **list** lives on the card (grilling, 2026-08-20, ticket 022).
 - Decide-then-build chains for each of the fourteen features
 - The join strip — region order model, crossfade maths, single-file export path
 - Saved projects — OPFS schema, what is stored, when it is evicted
@@ -387,9 +389,11 @@ chips that can be reordered, with draggable crossfades between them.
   Three tickets have now wanted it — 015 could not test removal, 016 lost the
   export as its unmount path, and 017 had to reach for `setTracks` to force a
   remount. It belongs to a feature chain that does not exist yet.
-- The region tools — split on silence, and snap to transients. Ticket 002 ruled
-  both out of the edit stack: they make and move regions, they do not change
-  sound. So each needs its own detection design, and neither is sharp yet.
+- **Split at transients** — one region per transient. Grilling on 2026-08-20 kept
+  it apart from ticket 026: "snap to transients" is a **magnet on a drag**, and
+  this is a **detect-then-cut** tool, the same shape as ticket 025. It is a good
+  feature and it was deliberately left out of the Regions stretch. It needs its
+  own onset-detection decision, which ticket 026 will have made first.
 - A level-setting slot before the compressor in the canonical order. Ticket 008
   found the hole: Simple view's "both switches on" stack normalizes, compresses,
   then normalizes again, and the canonical order cannot express that. Whether the

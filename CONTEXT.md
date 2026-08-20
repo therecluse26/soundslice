@@ -43,9 +43,41 @@ _Avoid_: file, clip, stem, lane
 
 **Region**:
 A start and end point on a track, marking audio to be cut out. Simple view
-allows one per track. Advanced view allows many. A region also carries its own
-volume, fade edges, and time and pitch.
+allows one per track. Advanced view allows many, and they may overlap. A region
+also carries its own volume, fade edges, and time and pitch. It may carry an
+optional name; without one it is known by its number, counted from the start of
+the track.
 _Avoid_: selection, clip, range, marker
+
+**Selected region**:
+The one region of a track that the play button plays. Clicking a region selects
+it. Each track has its own.
+_Avoid_: active region, current region, focus
+
+**Region tool**:
+A control that makes or moves regions. It never changes how the audio sounds, so
+it is not an operation and it is not on the edit stack. Split on silence and
+snap are the two.
+_Avoid_: region effect, detector
+
+**Split on silence**:
+The region tool that cuts a track into one region per non-silent stretch. It
+drops the silence between them and replaces the track's existing regions.
+_Avoid_: trim silence, auto-slice, detect
+
+**Padding**:
+The silence split on silence keeps at each end of a region, so the fade edges
+ramp over silence instead of over the attack.
+_Avoid_: margin, lead-in, handle
+
+**Transient**:
+A sudden rise in level, marking the start of a sound.
+_Avoid_: onset, hit, peak
+
+**Snap**:
+The region tool that makes a dragged region edge land on a transient. It is a
+magnet on a drag, not a button, and it makes no regions of its own.
+_Avoid_: quantise, magnetise, align
 
 **Slice**:
 The act of exporting a region as its own file.
