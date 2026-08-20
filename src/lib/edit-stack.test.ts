@@ -4,8 +4,14 @@ import {
   COMPRESSOR_DEFAULTS,
   EditStack,
   LIMITER_DEFAULTS,
+  Region,
   defaultRegion,
+  firstRegion,
   needsMeasurement,
+  orderedRegions,
+  regionAudioSignature,
+  regionLabel,
+  regionNumber,
   simpleStack,
   sortToCanonical,
 } from "./edit-stack";
@@ -194,11 +200,143 @@ describe("sortToCanonical", () => {
 
 describe("defaultRegion", () => {
   it("carries the 20 ms fades every slice has always had", () => {
-    expect(defaultRegion(1, 30)).toEqual({
+    // `id` is checked separately. Ticket 021 added it, and it is the one field
+    // whose value is different on every call.
+    const { id, ...rest } = defaultRegion(1, 30);
+
+    expect(typeof id).toBe("string");
+    expect(rest).toEqual({
       start: 1,
       end: 30,
       gainDb: 0,
       fade: { inMs: 20, outMs: 20 },
     });
+  });
+
+  it("gives every region an id of its own", () => {
+    const ids = [1, 2, 3, 4].map(() => defaultRegion(0, 1).id);
+    expect(new Set(ids).size).toBe(4);
+  });
+});
+
+/** A region with fixed bounds and a chosen id, so an ordering test can be read. */
+function at(id: string, start: number, end: number, name?: string): Region {
+  return { ...defaultRegion(start, end), id, name };
+}
+
+describe("orderedRegions", () => {
+  it("orders by start time, whatever order they were made in", () => {
+    const regions = [at("c", 30, 40), at("a", 0, 10), at("b", 10, 20)];
+
+    expect(orderedRegions(regions).map((region) => region.id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("keeps overlapping regions, because overlap is allowed", () => {
+    // Two takes of one phrase is a real thing to want. Ticket 021 decided it.
+    const regions = [at("b", 5, 15), at("a", 0, 10)];
+
+    expect(orderedRegions(regions).map((region) => region.id)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("breaks a tie the same way twice", () => {
+    // Without a total order two regions at the same start would swap between
+    // renders, and the numbers in the list would move under the pointer.
+    const regions = [at("b", 5, 9), at("a", 5, 9)];
+
+    expect(orderedRegions(regions).map((r) => r.id)).toEqual(
+      orderedRegions([...regions].reverse()).map((r) => r.id)
+    );
+  });
+
+  it("does not change the array it is given", () => {
+    const regions = [at("c", 30, 40), at("a", 0, 10)];
+    orderedRegions(regions);
+
+    expect(regions.map((region) => region.id)).toEqual(["c", "a"]);
+  });
+
+  it("answers for an empty track", () => {
+    expect(orderedRegions([])).toEqual([]);
+  });
+});
+
+describe("firstRegion", () => {
+  it("is the first by start time, which is what Simple view exports", () => {
+    expect(firstRegion([at("c", 30, 40), at("a", 2, 10)])?.id).toBe("a");
+  });
+
+  it("is undefined for a track with no regions", () => {
+    // Zero regions is legal. Every caller has to answer for it rather than
+    // skipping quietly, which is the shape of the defect ticket 016 fixed.
+    expect(firstRegion([])).toBeUndefined();
+  });
+});
+
+describe("regionNumber and regionLabel", () => {
+  const regions = [at("c", 30, 40), at("a", 0, 10), at("b", 10, 20, "chorus")];
+
+  it("numbers from the start of the track, counting from one", () => {
+    expect(regionNumber(regions, "a")).toBe(1);
+    expect(regionNumber(regions, "b")).toBe(2);
+    expect(regionNumber(regions, "c")).toBe(3);
+  });
+
+  it("falls back to the number when there is no name", () => {
+    expect(regionLabel(regions, regions[1])).toBe("Region 1");
+  });
+
+  it("uses the name when there is one", () => {
+    expect(regionLabel(regions, regions[2])).toBe("chorus");
+  });
+
+  it("treats a name of spaces as no name", () => {
+    const blank = [at("a", 0, 10, "   ")];
+    expect(regionLabel(blank, blank[0])).toBe("Region 1");
+  });
+
+  it("renumbers when a region moves past its neighbour", () => {
+    // `c` was third. Dragged to the front of the track it becomes first, and
+    // every number after it moves down. Ticket 023 relies on this: an unnamed
+    // region's exported file name carries this number.
+    const moved = regions.map((region) =>
+      region.id === "c" ? { ...region, start: 0, end: 5 } : region
+    );
+
+    expect(regionNumber(regions, "c")).toBe(3);
+    expect(regionNumber(moved, "c")).toBe(1);
+    expect(regionNumber(moved, "a")).toBe(2);
+  });
+});
+
+describe("regionAudioSignature", () => {
+  const region = at("a", 0, 10);
+
+  it("ignores the id and the name, which change no sample", () => {
+    expect(regionAudioSignature({ ...region, id: "z", name: "chorus" })).toEqual(
+      regionAudioSignature(region)
+    );
+  });
+
+  it("changes when the bounds move", () => {
+    expect(regionAudioSignature({ ...region, end: 10.5 })).not.toEqual(
+      regionAudioSignature(region)
+    );
+  });
+
+  it("changes when the gain or a fade moves", () => {
+    expect(regionAudioSignature({ ...region, gainDb: -6 })).not.toEqual(
+      regionAudioSignature(region)
+    );
+
+    expect(
+      regionAudioSignature({ ...region, fade: { inMs: 0, outMs: 20 } })
+    ).not.toEqual(regionAudioSignature(region));
   });
 });

@@ -69,10 +69,34 @@ export type EditStack = Operation[];
  * ignoring it.
  */
 export type Region = {
+  /**
+   * This region's identity, for the life of the page.
+   *
+   * A track holds many regions and they may overlap, so bounds cannot identify
+   * one. The id can, and it survives a drag, a rename and a reorder.
+   *
+   * **It is also the wavesurfer region's id.** `RegionParams.id` is taken
+   * verbatim by the regions plugin, so the store hands its id down rather than
+   * reading one back, and a region the user drew is adopted with the id the
+   * plugin minted. One id, one direction, no map to keep in step. Ticket 021
+   * weighed a second identity space and this is cheaper and has no stale half.
+   */
+  id: string;
+
   start: number;
   end: number;
   gainDb: number;
   fade: { inMs: number; outMs: number };
+
+  /**
+   * What the user called this region, when they called it something.
+   *
+   * Absent or empty means it is known by its **number by start time** instead —
+   * see `regionNumber`. The name reaches the exported file name, so
+   * `file-names.ts` sanitises it before it becomes one.
+   */
+  name?: string;
+
   stretch?: { rate: number; semitones: number };
 };
 
@@ -85,14 +109,101 @@ export type Region = {
  */
 export const DEFAULT_FADE_MS = 20;
 
+/**
+ * Region ids, minted here and nowhere else.
+ *
+ * A counter, not a random string and not `crypto.randomUUID`. The counter is
+ * readable in a test failure, it never collides with itself, and it needs
+ * nothing from the platform — this module must stay loadable under plain Node,
+ * which is `dsp.ts`'s rule applied one file over.
+ *
+ * The `ss-` prefix keeps it out of the plugin's own `region-<random>` space, so
+ * an adopted id and a minted id can never be the same string.
+ */
+let regionsMinted = 0;
+
+export function newRegionId(): string {
+  regionsMinted += 1;
+  return `ss-region-${regionsMinted}`;
+}
+
 /** The region a track gets when it has none of its own. */
 export function defaultRegion(start: number, end: number): Region {
   return {
+    id: newRegionId(),
     start,
     end,
     gainDb: 0,
     fade: { inMs: DEFAULT_FADE_MS, outMs: DEFAULT_FADE_MS },
   };
+}
+
+/**
+ * The regions of a track, in the order the user sees them: **by start time**.
+ *
+ * Ties break on end, then on id, so the order is total and two calls agree.
+ * Without that a zero-length tie would reorder between renders and the numbers
+ * in the list would swap under the pointer.
+ *
+ * Order is derived, never stored. A drag can move a region past its neighbour at
+ * any moment, and an array that had to be resorted on write would be one more
+ * thing to forget.
+ */
+export function orderedRegions(regions: readonly Region[]): Region[] {
+  return [...regions].sort(
+    (a, b) =>
+      a.start - b.start || a.end - b.end || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
+}
+
+/**
+ * The region Simple view draws and exports: the first by start time.
+ *
+ * `undefined` when the track has none. Zero regions is legal — the track exports
+ * nothing and the card says so — so every caller has to answer for it.
+ */
+export function firstRegion(regions: readonly Region[]): Region | undefined {
+  return orderedRegions(regions)[0];
+}
+
+/**
+ * What this region is called when it has no name: its number, counted from the
+ * start of the track.
+ *
+ * 1-based, because it is shown to a person. Returns 0 for a region that is not
+ * in the list, which no caller should be able to reach.
+ */
+export function regionNumber(regions: readonly Region[], id: string): number {
+  return orderedRegions(regions).findIndex((region) => region.id === id) + 1;
+}
+
+/**
+ * What this region is called on screen: its name, or its number.
+ *
+ * One rule, one place. The list row, the label on the waveform and the exported
+ * file name are three views of the same answer, and they must not drift.
+ */
+export function regionLabel(regions: readonly Region[], region: Region): string {
+  const named = region.name?.trim();
+  return named ? named : `Region ${regionNumber(regions, region.id)}`;
+}
+
+/**
+ * The parts of a region that decide what it **sounds** like.
+ *
+ * The measurement cache keys on this rather than on the whole region. An id and
+ * a name change nothing about the audio, so renaming a region must not throw
+ * away a loudness measurement that cost a full decode to make.
+ */
+export function regionAudioSignature(region: Region): unknown[] {
+  return [
+    region.start,
+    region.end,
+    region.gainDb,
+    region.fade.inMs,
+    region.fade.outMs,
+    region.stretch ?? null,
+  ];
 }
 
 /**

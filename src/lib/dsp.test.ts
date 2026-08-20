@@ -6,6 +6,7 @@ import {
   maxAmplitude,
   peakNormalizationGain,
   regionFrameCount,
+  rmsDbWindows,
 } from "./dsp";
 
 /**
@@ -114,5 +115,64 @@ describe("regionFrameCount", () => {
 
   it("never returns zero, because OfflineAudioContext rejects it", () => {
     expect(regionFrameCount(5, 5, 44100)).toBe(1);
+  });
+});
+
+describe("rmsDbWindows", () => {
+  /** `size` samples alternating between +amplitude and −amplitude. */
+  const steady = (amplitude: number, size: number) =>
+    Float32Array.from({ length: size }, (_, i) =>
+      i % 2 === 0 ? amplitude : -amplitude
+    );
+
+  it("reads full scale as 0 dBFS", () => {
+    expect(rmsDbWindows([steady(1, 8)], 8)[0]).toBeCloseTo(0, 6);
+  });
+
+  it("reads half amplitude as about −6 dBFS", () => {
+    expect(rmsDbWindows([steady(0.5, 8)], 8)[0]).toBeCloseTo(-6.0206, 3);
+  });
+
+  it("reads silence as −Infinity, not 0", () => {
+    // A comparison against a threshold is then correct with no special case.
+    // `NaN` would silently be false on both sides of every comparison.
+    expect(rmsDbWindows([new Float32Array(8)], 8)[0]).toBe(-Infinity);
+  });
+
+  it("gives one number per window", () => {
+    expect(rmsDbWindows([steady(1, 40)], 8)).toHaveLength(5);
+  });
+
+  it("keeps a short last window rather than dropping it", () => {
+    // Dropping it would lose up to one window of audio at the end of every
+    // file, which for split on silence means losing the last phrase.
+    expect(rmsDbWindows([steady(1, 20)], 8)).toHaveLength(3);
+  });
+
+  it("averages across every channel", () => {
+    // One channel at full scale and one silent is half the energy, so 3 dB
+    // below full scale — not 0 dBFS, and not −Infinity.
+    const both = rmsDbWindows([steady(1, 8), new Float32Array(8)], 8)[0];
+    expect(both).toBeCloseTo(-3.0103, 3);
+  });
+
+  it("answers for no channels and for no samples", () => {
+    expect(rmsDbWindows([], 8)).toHaveLength(0);
+    expect(rmsDbWindows([new Float32Array(0)], 8)).toHaveLength(0);
+  });
+
+  it("never divides by a window of zero samples", () => {
+    expect(rmsDbWindows([steady(1, 4)], 0)).toHaveLength(4);
+  });
+
+  it("reads a subarray, so a chunked scan costs no memory", () => {
+    // `region-tools.ts` slices the channels with `subarray` and calls this per
+    // chunk. A copy per chunk would double peak memory on a 45-minute track.
+    const whole = steady(1, 32);
+    const half = whole.subarray(16, 32);
+
+    expect(Array.from(rmsDbWindows([half], 8))).toEqual(
+      Array.from(rmsDbWindows([whole], 8)).slice(2)
+    );
   });
 });

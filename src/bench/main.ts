@@ -172,7 +172,10 @@ async function fetchAsFile(name: string): Promise<File> {
  * slice has always had, so this is the same audio the old harness measured.
  */
 function trackFor(file: File, durationSec: number): EditorTrack {
-  return { file, region: defaultRegion(0, durationSec) };
+  // One region, so `AudioService.sliceTrack` measures exactly the work it
+  // measured before ticket 021 gave a track many. `sliceTrack` renders the first
+  // region by start time, and with one region that is the only region.
+  return { file, regions: [defaultRegion(0, durationSec)] };
 }
 
 const SWITCHES_OFF = {

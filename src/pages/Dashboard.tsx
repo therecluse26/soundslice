@@ -9,10 +9,15 @@ import SineWaveLoader from "@/components/custom/SineWaveLoader";
 import { AdvancedSettingsChip } from "@/components/custom/AdvancedSettingsChip";
 import { RefusedFilesNotice } from "@/components/custom/RefusedFilesNotice";
 import { SliceProgressLabel } from "@/components/custom/SliceProgressLabel";
+import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { countRender } from "@/lib/render-count";
 
 export default function Dashboard() {
   if (import.meta.env.DEV) countRender("Dashboard");
+
+  // Once for the whole page. One history serves the whole project, so one
+  // listener serves it — a listener per card would undo once per card.
+  useUndoRedo();
 
   /**
    * Subscribes to the **files**, not the tracks.

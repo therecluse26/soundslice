@@ -95,6 +95,48 @@ export function fadeTimes(
 }
 
 /**
+ * The RMS level of each fixed-length window, in dBFS, across every channel.
+ *
+ * One number per window, so a 45-minute track at 20 ms windows is 135,000
+ * numbers rather than 119 million samples. Everything that has to find quiet
+ * parts or sudden loud parts reads this instead of the samples.
+ *
+ * **RMS, not peak.** A peak reacts to one stray sample, so a single click in a
+ * silent room would read as speech. RMS over a window is how a noise gate hears
+ * it, and it is what makes a −40 dBFS threshold mean what a user expects.
+ *
+ * Silence reads `-Infinity`, not `0`. A comparison against a threshold is then
+ * correct with no special case, which `NaN` would not be.
+ *
+ * The last window is kept even when it is short. Dropping it would lose up to
+ * one window of audio at the end of every file.
+ */
+export function rmsDbWindows(
+  channels: Float32Array[],
+  windowSamples: number
+): Float32Array {
+  const frames = channels[0]?.length ?? 0;
+  const size = Math.max(1, Math.floor(windowSamples));
+  const count = frames === 0 ? 0 : Math.ceil(frames / size);
+  const levels = new Float32Array(count);
+
+  for (let window = 0; window < count; window++) {
+    const from = window * size;
+    const to = Math.min(from + size, frames);
+
+    let sum = 0;
+    for (const samples of channels) {
+      for (let i = from; i < to; i++) sum += samples[i] * samples[i];
+    }
+
+    const mean = sum / Math.max(1, (to - from) * channels.length);
+    levels[window] = mean > 0 ? 10 * Math.log10(mean) : -Infinity;
+  }
+
+  return levels;
+}
+
+/**
  * How many frames a region occupies at a given sample rate.
  *
  * Rounded, not truncated. `createBuffer` in the old trimmer took

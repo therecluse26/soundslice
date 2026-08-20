@@ -57,8 +57,18 @@ _Avoid_: active region, current region, focus
 **Region tool**:
 A control that makes or moves regions. It never changes how the audio sounds, so
 it is not an operation and it is not on the edit stack. Split on silence and
-snap are the two.
+snap are the two. They live in a strip above the waveform.
 _Avoid_: region effect, detector
+
+**Gain line**:
+The line drawn across a region, showing that region's own volume. Drag it up or
+down. Top is loudest.
+_Avoid_: volume line, envelope, fader
+
+**Fade grip**:
+The small square at a region's top corner. Drag it sideways to set that edge's
+fade.
+_Avoid_: handle, node, anchor
 
 **Split on silence**:
 The region tool that cuts a track into one region per non-silent stretch. It
@@ -99,6 +109,16 @@ _Avoid_: effect, step, action
 The ordered list of operations held against a track. Nothing is applied to the
 audio until export replays the stack.
 _Avoid_: pipeline, chain, history
+
+**Gesture**:
+One change a user makes, from start to finish. A whole drag is one gesture, not
+one per frame. It is the unit undo reverses.
+_Avoid_: action, command, event
+
+**Command history**:
+The ordered list of gestures, kept so any of them can be reversed. One for the
+whole project, not one per track.
+_Avoid_: undo stack, journal, log
 
 **Envelope**:
 A setting whose value changes across a track, instead of holding one value.

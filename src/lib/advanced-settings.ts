@@ -53,8 +53,7 @@ export function countAdvancedSettings(
 ): number {
   let count = 0;
 
-  // More than one region on any track. One region per track is all that exists
-  // today; many regions arrive with the Regions feature.
+  // More than one region on any track. Reachable since ticket 021.
   if (tracks.some(hasExtraRegions)) count += 1;
 
   // FLAC, Opus, 24-bit, or a sample rate that is not the file's own. **One in
@@ -85,10 +84,14 @@ function hasExtraRegions(track: EditorTrack): boolean {
 }
 
 /**
- * `EditorTrack` still holds a single `region`. Many regions per track arrive
- * with the Regions feature, and this is the one place that has to change when
- * they do.
+ * How many regions this track holds.
+ *
+ * It used to read `track.region ? 1 : 0`, because a track held one. Ticket 021
+ * gave it many, and the chip's count kept its meaning without changing: **more
+ * than one region anywhere counts one**, not one per region. A user with six
+ * regions on ten tracks still reads "1 Advanced setting active", because it is
+ * still one sentence — "this export is not one Simple view could describe".
  */
 function regionCount(track: EditorTrack): number {
-  return track.region ? 1 : 0;
+  return track.regions.length;
 }

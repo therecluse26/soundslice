@@ -1,9 +1,10 @@
 # 023 — Export many regions
 
 **Type:** `wayfinder:task`
-**Status:** open
-**Assignee:** _unclaimed_
-**Blocked by:** [021 — Many regions per track](./021-many-regions-per-track.md)
+**Status:** closed
+**Assignee:** build session, 2026-08-20
+**Blocked by:** none — was [021 — Many regions per track](./021-many-regions-per-track.md), closed 2026-08-20
+
 **Blocks:** _none_
 **Map:** [Simple view and Advanced view](../map.md)
 
@@ -68,3 +69,60 @@ silently and losing files.
 - A name holding `/` produces a valid filename that opens.
 - A ten-track, sixty-region batch shows progress that reaches 100% exactly once.
 - `pnpm test` covers the naming rules as plain string functions.
+
+## Resolution — 2026-08-20
+
+**Built.** `regionFileName` in [`file-names.ts`](../../src/lib/file-names.ts) is
+the one place that decides a name, and `AudioService.planSlices` is the one place
+that makes it unique.
+
+### The names, measured out of a real zip
+
+| Case | Name |
+|---|---|
+| the track's only region | `sliced_hits.wav` — **no suffix** |
+| one of many, unnamed | `sliced_phrases_1.wav` … `sliced_phrases_7.wav` |
+| one of many, named | `sliced_phrases_chorus.wav` |
+| two regions named the same | `sliced_phrases_chorus (2).wav` |
+| a name holding `/` | `sliced_phrases_verse-one.wav` |
+
+### The four things weighed
+
+1. **A region name is user text**, so `sanitizeNamePart` runs first. `/` and `\`
+   would make a directory; `:` names a drive on Windows and a resource fork on
+   macOS; `<>"|?*` are refused outright; a control character or a null byte can
+   truncate the name where it is used. Every one becomes `-`. Leading and trailing
+   dots and spaces go too, because Windows strips a trailing dot silently and two
+   names would become one file. Capped at **64 characters**, so the path can still
+   be written.
+   A name carrying **no letter and no digit in any script returns `""`** and falls
+   back to the number: `///` would otherwise come back as `---`, which reads as a
+   bug rather than as a name.
+2. **One `taken` set across the whole export**, owned by `planSlices`. Two tracks
+   that each hold a region called "chorus" both arrive.
+3. **Numbering is by start time, and a moved region renumbers.** Said plainly in
+   the code and in the list: the number matches what the card shows, and a hidden
+   creation order the user cannot see would be worse. A user who wants a stable
+   name gives the region one.
+4. **The zip's own name** for one track with many regions is
+   `trimmed_<stem>.zip`.
+
+### Progress counts regions, not tracks
+
+`planSlices` builds every output **before** any of them renders, so `fileCount` is
+the region count from the first report. Measured on two tracks holding 7 and 1
+regions: `fileCount: 8`, eight distinct file indices, **326 reports, none of which
+goes backwards**, running 0.0031 → 1.
+
+### Measured
+
+- A one-region track exports **byte-identical bytes and an identical filename**
+  against commit `b690dbb`: 5,292,044 bytes, `99fbd8ef…07a7` switches off and
+  `f32d6274…0c7e` switches on, named `trimmed_clip-30s.wav`.
+- A seven-region track gives seven files in one zip, **checked by decoding them**:
+  1.1 s, 1.2 s × 5, 0.5 s, each peaking at 0.5 — the regions exactly.
+- Two regions named the same give ` (2)`, and the zip holds both.
+- A name holding `/` produces a valid filename that opens.
+- `pnpm test` covers the naming rules as plain string functions, including the
+  character class that a lazy `[\x20-\x3c…]` range would have used to eat every
+  digit.

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type WaveSurfer from "wavesurfer.js";
 import { AudioService } from "@/lib/audio-service";
-import { masterExportSettings, useAudioStore } from "@/stores/audio-store";
+import {
+  masterExportSettings,
+  selectedRegion,
+  useAudioStore,
+} from "@/stores/audio-store";
 import type { EditorTrack } from "@/stores/audio-store";
 import { EditStack, needsMeasurement } from "@/lib/edit-stack";
 import {
@@ -72,7 +76,11 @@ export function usePreview(
   );
   const [busy, setBusy] = useState(false);
 
-  const region = track?.region;
+  // **Preview follows the selection.** `scheduleRegionEnvelope` writes one
+  // envelope for one region, so the region it writes has to be the one the play
+  // button plays. Selecting another region during playback gives this hook a new
+  // region object, which reschedules the envelope on the next play or seek.
+  const region = selectedRegion(track);
   const fileName = track?.file.name;
 
   /** The stack this track exports through, read fresh. Never subscribed to. */
@@ -152,6 +160,17 @@ export function usePreview(
       wavesurfer.on("seeking", scheduleFrom),
     ];
 
+    // **A region gain or fade moved during playback is heard at once.**
+    //
+    // This effect re-runs whenever the region object changes, which is every
+    // gesture on the selected region. Without this line the new envelope would
+    // wait for the next play or seek: `PreviewGraph.update` rebuilds the stack
+    // chain and never touches the envelope, so nothing else would write it.
+    //
+    // Ticket 019 promised this for a slider on the stack. Ticket 022 gave the
+    // region its own sliders, and they are the same promise.
+    if (wavesurfer.isPlaying()) scheduleFrom(wavesurfer.getCurrentTime());
+
     return () => off.forEach((unsubscribe) => unsubscribe());
   }, [wavesurfer, region]);
 
@@ -167,7 +186,7 @@ export function usePreview(
       setBusy(true);
       try {
         setMeasured(
-          await AudioService.measureFor(track, masterExportSettings())
+          await AudioService.measureFor(track, region, masterExportSettings())
         );
       } finally {
         measuring.current = false;

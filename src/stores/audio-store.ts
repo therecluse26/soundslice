@@ -4,13 +4,27 @@ import { BitDepth, OutputFormat } from "@/lib/output-format";
 // store is imported by every component. A value import here would put the zip
 // library in front of the first waveform.
 import type { ExportSettings, SliceProgress } from "@/lib/audio-service";
-import { EditStack, Region, defaultRegion } from "@/lib/edit-stack";
+import { EditStack, Region, firstRegion } from "@/lib/edit-stack";
+import {
+  EMPTY_HISTORY,
+  History,
+  TrackSnapshot,
+  changedFileNames,
+  pushEntry,
+  redoEntry,
+  snapshotTrack,
+  undoEntry,
+} from "@/lib/history";
 import {
   MEMORY_CEILING_BYTES,
   SizedFile,
   admit,
   formatBytes,
 } from "@/lib/memory-ceiling";
+// `import type`. A value import would pull `silence.ts` into the module every
+// component already loads, and a Simple view user would download a tool they
+// cannot reach. Standing rule 6, the same reasoning as the JSZip import above.
+import type { SilenceSettings } from "@/lib/silence";
 import { readPersisted, writePersisted } from "@/lib/persisted";
 import {
   DEFAULT_VIEW,
@@ -35,15 +49,38 @@ import {
  * reactive state gives stale reads and update loops, so the plugin object stays
  * inside `AudioEditor` and only plain numbers come out.
  *
- * It is now the edit stack's `Region`, which carries the region's own gain and
- * fade edges beside its bounds. The card still writes only `start` and `end`;
- * `setTrackRegion` keeps the rest.
+ * It is the edit stack's `Region`, which carries the region's own identity,
+ * name, gain and fade edges beside its bounds.
  */
 export type TrackRegion = Region;
 
 export type EditorTrack = {
   file: File;
-  region?: TrackRegion;
+
+  /**
+   * Every region on this track. **Many, and they may overlap.**
+   *
+   * An array, not a record. Order is derived from start time by
+   * `orderedRegions`, because a drag can move a region past its neighbour at any
+   * moment and an array that had to be resorted on write is one more thing to
+   * forget. Identity is the region's own `id`, so nothing depends on position.
+   *
+   * **Zero is legal.** The track exports nothing and the card says so. Simple
+   * view never sees zero — it keeps one — but every export path still has to
+   * answer for it rather than skipping quietly, which is the shape of the defect
+   * ticket 016 fixed.
+   */
+  regions: TrackRegion[];
+
+  /**
+   * The region the play button plays, by id.
+   *
+   * On the track, so it survives a view switch for free. `undefined` means the
+   * first region by start time, which is also what Simple view draws — so a
+   * track that has never been touched behaves exactly as it did before many
+   * regions existed.
+   */
+  selectedRegionId?: string;
 
   /**
    * This track's own stack, when it has one.
@@ -66,6 +103,24 @@ export type EditorTrack = {
    * describes, and this never is.
    */
   previewEffects?: boolean;
+};
+
+/** How a region edit is recorded on the command history. */
+export type RegionEditOptions = {
+  /** What the user did, in their words. Shown on the undo control. */
+  label?: string;
+
+  /**
+   * Two edits sharing this key are one gesture, and undo reverses both.
+   *
+   * A slider dragged from 0 dB to −6 dB fires many times. One key — the region
+   * and the property — makes them one entry, and letting go of the slider is
+   * what ends the gesture, because the next key differs.
+   */
+  coalesceKey?: string;
+
+  /** Skips the history entirely. For restores and for undo's own writes. */
+  silent?: boolean;
 };
 
 interface AudioState {
@@ -101,15 +156,111 @@ interface AudioState {
   getTrack: (fileName: string) => EditorTrack | undefined;
 
   /**
-   * Writes a region's bounds, keeping everything else it owns.
+   * Gives a track its regions, **only if it has none**, and records no history.
    *
-   * The card knows the bounds and nothing else. Its gain and its fade edges
-   * survive a drag because this merges rather than replaces.
+   * The card calls this on mount for a track that has never had a region. That
+   * is not a gesture — the user did not do it — so it must not land on the undo
+   * stack, or the first Ctrl+Z of a session would delete a region nobody made.
+   *
+   * Ticket 017's rule lives here: a card restores what is stored and falls back
+   * to the default only for a track with nothing.
    */
-  setTrackRegion: (
+  ensureTrackRegions: (fileName: string, regions: TrackRegion[]) => void;
+
+  /**
+   * Replaces every region on a track, as one gesture.
+   *
+   * What split on silence calls, and what undo calls to put a list back.
+   */
+  setTrackRegions: (
     fileName: string,
-    bounds: { start: number; end: number }
+    regions: TrackRegion[],
+    options?: RegionEditOptions
   ) => void;
+
+  /** Adds one region and selects it. */
+  addTrackRegion: (
+    fileName: string,
+    region: TrackRegion,
+    options?: RegionEditOptions
+  ) => void;
+
+  /**
+   * Changes one region, keeping everything else it owns.
+   *
+   * A drag sends bounds; the list row sends a name, a gain or a fade. Merging
+   * rather than replacing is why a dragged region keeps the gain the user set on
+   * it — the rule `setTrackRegion` held before regions had identity.
+   */
+  updateTrackRegion: (
+    fileName: string,
+    id: string,
+    patch: Partial<Omit<TrackRegion, "id">>,
+    options?: RegionEditOptions
+  ) => void;
+
+  /** Removes one region. The track may end up with none, and that is legal. */
+  removeTrackRegion: (
+    fileName: string,
+    id: string,
+    options?: RegionEditOptions
+  ) => void;
+
+  /**
+   * Selects a region, or clears the selection with `undefined`.
+   *
+   * **Not a gesture.** Selecting changes nothing about the audio or the file
+   * list, so it is not on the undo stack. An undo that only moved a highlight
+   * would look like a broken undo.
+   */
+  selectTrackRegion: (fileName: string, id: string | undefined) => void;
+
+  /**
+   * One command history for the whole project, per
+   * [`designs/edit-stack.md`](../../.wayfinder/designs/edit-stack.md) §8.
+   *
+   * Not one per track: a gesture that touches every track at once cannot be
+   * expressed by per-track histories, and "Clear Advanced settings" is exactly
+   * that gesture.
+   */
+  history: History;
+
+  /** Reverses the last gesture. Returns the tracks it changed, for scrolling. */
+  undo: () => string[];
+
+  /** Replays the last undone gesture. Returns the tracks it changed. */
+  redo: () => string[];
+
+  /**
+   * The transient magnet, for every track at once.
+   *
+   * A magnet is a **mode**, the way grid snap is a mode, so it is one switch and
+   * not one per track. Advanced view shows it in the Regions section.
+   *
+   * Not persisted. `MasterDefaults` holds what an export is made of; this
+   * changes no exported file, only how a drag lands. The same reasoning keeps
+   * **Preview effects** off the Advanced settings chip.
+   */
+  snapToTransients: boolean;
+  setSnapToTransients: (snap: boolean) => void;
+
+  /**
+   * What split on silence is set to, for every track at once, or `null` for
+   * **the defaults**.
+   *
+   * In the store rather than in the panel's own state, so switching to Simple
+   * view and back does not throw the settings away. Standing rule 5: switching
+   * views never loses work. Not persisted, for the same reason
+   * `snapToTransients` is not — it changes no exported file by itself.
+   *
+   * `null` rather than `SILENCE_DEFAULTS`, and the reason is bundle size, not
+   * taste. Naming the defaults here would import `silence.ts` into the module
+   * every component already loads, and Simple view would download a tool it can
+   * never reach. Standing rule 6. `outputSampleRate` uses `null` for "the
+   * default" for the same kind of reason.
+   */
+  silenceSettings: SilenceSettings | null;
+  setSilenceSettings: (settings: SilenceSettings) => void;
 
   /** Turns this track's **Preview effects** switch on or off. */
   setTrackPreviewEffects: (fileName: string, effects: boolean) => void;
@@ -190,6 +341,64 @@ const storedMasterDefaults: MasterDefaults =
   ) ?? DEFAULT_MASTER_DEFAULTS;
 
 export const useAudioStore = create<AudioState>((set, get) => {
+  /**
+   * Applies one change to one track, and records it as a gesture.
+   *
+   * Every region action goes through here, so there is exactly one place that
+   * knows how an edit becomes a history entry. `mutate` returns the track's new
+   * regions and selection; this wraps them in a new track object and leaves
+   * every other track's object identity alone — which is what stops the other
+   * cards redrawing. Ticket 009's rule, unchanged.
+   */
+  const editTrack = (
+    fileName: string,
+    mutate: (track: EditorTrack) => Pick<EditorTrack, "regions" | "selectedRegionId">,
+    options: RegionEditOptions = {}
+  ) => {
+    const track = get().tracks.find((t) => t.file.name === fileName);
+    if (!track) return;
+
+    const before = snapshotTrack(fileName, track.regions, track.selectedRegionId);
+    const next = mutate(track);
+
+    applyToTracks(
+      [{ fileName, regions: next.regions, selectedRegionId: next.selectedRegionId }],
+      options.silent
+        ? undefined
+        : {
+            label: options.label ?? "Edit regions",
+            before: [before],
+            after: [snapshotTrack(fileName, next.regions, next.selectedRegionId)],
+            coalesceKey: options.coalesceKey,
+          }
+    );
+  };
+
+  /** Writes snapshots onto the tracks, and optionally records the gesture. */
+  const applyToTracks = (
+    snapshots: TrackSnapshot[],
+    entry?: Parameters<typeof pushEntry>[1]
+  ) => {
+    const byName = new Map(snapshots.map((snap) => [snap.fileName, snap]));
+
+    const tracks = get().tracks.map((track) => {
+      const snap = byName.get(track.file.name);
+      if (!snap) return track;
+
+      return {
+        ...track,
+        regions: snap.regions,
+        selectedRegionId: snap.selectedRegionId,
+      };
+    });
+
+    set(
+      entry
+        ? { tracks, history: pushEntry(get().history, entry) }
+        : { tracks }
+    );
+  };
+
   /** Writes the whole master defaults object, with one key changed. */
   const persistMasterDefault = <K extends keyof MasterDefaults>(
     key: K,
@@ -255,7 +464,13 @@ export const useAudioStore = create<AudioState>((set, get) => {
       set({
         tracks: [
           ...merged,
-          ...fresh.filter((track) => allowed.has(track.file.name)),
+          // `regions: []`, always. The uploader builds `{ file }` and casts, so
+          // a fresh track arrives without the field. Normalising here means no
+          // reader anywhere has to write `track.regions ?? []`, and a missing
+          // array cannot reach the export path.
+          ...fresh
+            .filter((track) => allowed.has(track.file.name))
+            .map((track) => ({ ...track, regions: track.regions ?? [] })),
         ],
         // The message counts what is held *after* this drop, so it must include
         // the files this same drop accepted. Counting only `held` reported
@@ -272,23 +487,131 @@ export const useAudioStore = create<AudioState>((set, get) => {
     getTrack: (fileName: string) =>
       get().tracks.find((track) => track.file.name === fileName),
 
-    setTrackRegion: (
+    ensureTrackRegions: (fileName: string, regions: TrackRegion[]) => {
+      const track = get().tracks.find((t) => t.file.name === fileName);
+      if (!track || track.regions.length > 0) return;
+
+      editTrack(fileName, () => ({ regions, selectedRegionId: regions[0]?.id }), {
+        silent: true,
+      });
+    },
+
+    setTrackRegions: (
       fileName: string,
-      bounds: { start: number; end: number }
+      regions: TrackRegion[],
+      options?: RegionEditOptions
     ) => {
+      editTrack(
+        fileName,
+        (track) => ({
+          regions,
+          // Keep the selection if the region it names is still here. Split on
+          // silence replaces every region, so it usually is not, and the first
+          // of the new list is the sensible answer.
+          selectedRegionId: regions.some((r) => r.id === track.selectedRegionId)
+            ? track.selectedRegionId
+            : regions[0]?.id,
+        }),
+        { label: "Replace regions", ...options }
+      );
+    },
+
+    addTrackRegion: (
+      fileName: string,
+      region: TrackRegion,
+      options?: RegionEditOptions
+    ) => {
+      editTrack(
+        fileName,
+        (track) => ({
+          regions: [...track.regions, region],
+          selectedRegionId: region.id,
+        }),
+        { label: "Add region", ...options }
+      );
+    },
+
+    updateTrackRegion: (
+      fileName: string,
+      id: string,
+      patch: Partial<Omit<TrackRegion, "id">>,
+      options?: RegionEditOptions
+    ) => {
+      editTrack(
+        fileName,
+        (track) => ({
+          regions: track.regions.map((region) =>
+            region.id === id ? { ...region, ...patch } : region
+          ),
+          selectedRegionId: track.selectedRegionId,
+        }),
+        { label: "Edit region", ...options }
+      );
+    },
+
+    removeTrackRegion: (
+      fileName: string,
+      id: string,
+      options?: RegionEditOptions
+    ) => {
+      editTrack(
+        fileName,
+        (track) => {
+          const regions = track.regions.filter((region) => region.id !== id);
+
+          return {
+            regions,
+            selectedRegionId:
+              track.selectedRegionId === id
+                ? regions[0]?.id
+                : track.selectedRegionId,
+          };
+        },
+        { label: "Delete region", ...options }
+      );
+    },
+
+    selectTrackRegion: (fileName: string, id: string | undefined) => {
+      const track = get().tracks.find((t) => t.file.name === fileName);
+      if (!track || track.selectedRegionId === id) return;
+
       set({
-        tracks: get().tracks.map((track) =>
-          track.file.name === fileName
-            ? {
-                ...track,
-                region: track.region
-                  ? { ...track.region, ...bounds }
-                  : defaultRegion(bounds.start, bounds.end),
-              }
-            : track
+        tracks: get().tracks.map((t) =>
+          t.file.name === fileName ? { ...t, selectedRegionId: id } : t
         ),
       });
     },
+
+    history: EMPTY_HISTORY,
+
+    undo: () => {
+      const { history, entry } = undoEntry(get().history);
+      if (!entry) return [];
+
+      applyToTracks(entry.before);
+      set({ history });
+
+      return changedFileNames(entry);
+    },
+
+    redo: () => {
+      const { history, entry } = redoEntry(get().history);
+      if (!entry) return [];
+
+      applyToTracks(entry.after);
+      set({ history });
+
+      return changedFileNames(entry);
+    },
+
+    snapToTransients: false,
+
+    setSnapToTransients: (snapToTransients: boolean) => set({ snapToTransients }),
+
+    silenceSettings: null,
+
+    setSilenceSettings: (silenceSettings: SilenceSettings) =>
+      set({ silenceSettings }),
 
     setTrackPreviewEffects: (fileName: string, previewEffects: boolean) => {
       set({
@@ -360,6 +683,27 @@ export const useAudioStore = create<AudioState>((set, get) => {
     },
   };
 });
+
+/**
+ * The region this track's play button plays.
+ *
+ * The selected one, or the first by start time when nothing is selected. So a
+ * track nobody has clicked behaves exactly as it did when a track held one
+ * region — which is also the region Simple view draws and exports.
+ *
+ * `undefined` for a track with no regions. There is nothing to play.
+ */
+export function selectedRegion(
+  track: EditorTrack | undefined
+): TrackRegion | undefined {
+  if (!track) return undefined;
+
+  const chosen = track.regions.find(
+    (region) => region.id === track.selectedRegionId
+  );
+
+  return chosen ?? firstRegion(track.regions);
+}
 
 /**
  * The master defaults, as the engine reads them.

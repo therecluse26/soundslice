@@ -26,7 +26,7 @@
  * measurement away, which is correct and cheap — the next play measures again.
  */
 
-import { EditStack, Region } from "./edit-stack";
+import { EditStack, Region, regionAudioSignature } from "./edit-stack";
 
 /** What a cached measurement is filed under. */
 export type MeasurementKey = string;
@@ -48,7 +48,16 @@ export function measurementKey(
   stack: EditStack,
   sampleRate: number
 ): MeasurementKey {
-  return JSON.stringify([fileName, region, stack, sampleRate]);
+  // `regionAudioSignature`, not the region itself. Ticket 021 gave a region an
+  // id and a name, and neither changes a single sample. Keying on the whole
+  // object would throw a measurement away every time a user typed a letter into
+  // the name field, and each one costs a full decode to make again.
+  return JSON.stringify([
+    fileName,
+    regionAudioSignature(region),
+    stack,
+    sampleRate,
+  ]);
 }
 
 export function recallMeasurement(

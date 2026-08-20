@@ -10,12 +10,14 @@ import { ExportOptions } from "./ExportOptions";
 /**
  * The Advanced view panel on a track card.
  *
- * Three sections, in the order the map's vision states: **tracks in, regions
- * cut, files out.** Every section starts closed, so Advanced view opens looking
- * almost identical to Simple view.
+ * **Two sections now, not three.** The map's vision is tracks in, regions cut,
+ * files out — and *regions cut* left this panel. Everything about a region is on
+ * the waveform: the tools in a strip above it, and a region's own gain, fades
+ * and name drawn on the region itself. A panel below the card asked the user to
+ * look away from the thing they were cutting.
  *
- * Every section is empty. That is expected at this point: this ticket builds
- * the shell and the lazy-load boundary, and the feature tickets fill it.
+ * Both sections start closed, so Advanced view opens looking almost identical to
+ * Simple view.
  *
  * **This file is the lazy-load boundary.** It is reached only through a dynamic
  * import in `AudioEditor`, so a Simple view user never downloads it. Everything
@@ -27,16 +29,6 @@ import { ExportOptions } from "./ExportOptions";
 export default function AdvancedPanel() {
   return (
     <Accordion type="multiple" className="w-full">
-      <AccordionItem value="regions">
-        <AccordionTrigger>Regions</AccordionTrigger>
-        <AccordionContent>
-          <EmptySection
-            what="Many regions, split on silence, and snap to transients."
-            ticket="the Regions feature tickets"
-          />
-        </AccordionContent>
-      </AccordionItem>
-
       <AccordionItem value="sound">
         <AccordionTrigger>Sound</AccordionTrigger>
         <AccordionContent>

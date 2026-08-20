@@ -21,7 +21,12 @@ import {
   ReloadIcon,
 } from "@radix-ui/react-icons";
 import { useTheme } from "@/hooks/useTheme";
-import { masterExportSettings, useAudioStore } from "@/stores/audio-store";
+import {
+  masterExportSettings,
+  selectedRegion,
+  useAudioStore,
+} from "@/stores/audio-store";
+import type { EditorTrack, TrackRegion } from "@/stores/audio-store";
 import { AudioService } from "@/lib/audio-service";
 import { downloadBlob } from "@/lib/download";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -31,7 +36,9 @@ import { HiddenRegionsChip } from "./HiddenRegionsChip";
 import { PreviewEffects } from "./PreviewEffects";
 import { usePreview } from "@/hooks/usePreview";
 import { countRender } from "@/lib/render-count";
-import { WAVEFORM_COLORS } from "@/lib/waveform-colors";
+import { REGION_COLORS, WAVEFORM_COLORS } from "@/lib/waveform-colors";
+import { defaultRegion, firstRegion, regionLabel } from "@/lib/edit-stack";
+import { stemOf } from "@/lib/file-names";
 
 /**
  * The lazy-load boundary for Advanced view.
@@ -40,6 +47,34 @@ import { WAVEFORM_COLORS } from "@/lib/waveform-colors";
  * downloads it. Keep every Advanced-only module behind this import.
  */
 const AdvancedPanel = lazy(() => import("./advanced/AdvancedPanel"));
+
+/**
+ * The region tools, as a strip above the waveform.
+ *
+ * Advanced-only, so it sits behind its own dynamic import — standing rule 6.
+ */
+const RegionToolbar = lazy(() => import("./advanced/RegionToolbar"));
+
+/**
+ * A region's gain, fades, name and delete — drawn **on the region**.
+ *
+ * It renders nothing itself. It hangs plain DOM on each wavesurfer region
+ * element, because that element belongs to the plugin and React cannot own a
+ * node another library creates and destroys.
+ */
+const RegionInlineControls = lazy(
+  () => import("./advanced/RegionInlineControls")
+);
+
+/**
+ * The transient magnet, which draws nothing.
+ *
+ * A component rather than a hook call, because a hook cannot be called
+ * conditionally and this one reaches onset detection, which reaches the decoder.
+ * Calling it here cost the Simple bundle **4.99 KiB gzip, measured**, for a tool
+ * Simple view cannot switch on. Standing rule 6.
+ */
+const RegionMagnet = lazy(() => import("./advanced/RegionMagnet"));
 
 // Interfaces
 interface EditorProps {
@@ -69,6 +104,22 @@ const formatTime = (seconds: number) =>
  */
 const DEFAULT_REGION = { start: 1, end: 100 };
 
+/**
+ * The shortest region a **resize** may produce, per view, in seconds.
+ *
+ * Simple view keeps 5 seconds, which is the figure this card has enforced since
+ * before this map existed. Standing rule 4: nothing that already works changes.
+ *
+ * Advanced view needs far less. Split on silence cuts spoken phrases, and a
+ * 5-second floor would refuse most of them. A region shorter than the fade edges
+ * is still legal — `fadeTimes` shortens both fades to fit rather than letting
+ * them overlap.
+ */
+const MIN_REGION_SEC = { simple: 5, advanced: 0.05 } as const;
+
+/** Stable identity for a track that is not in the store yet. */
+const NO_REGIONS: TrackRegion[] = [];
+
 export const AudioEditor = React.memo(({ file }: EditorProps) => {
   if (import.meta.env.DEV) countRender(`AudioEditor:${file.name}`);
 
@@ -80,10 +131,18 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   const track = useAudioStore((state) =>
     state.tracks.find((t) => t.file.name === file.name)
   );
-  const setTrackRegion = useAudioStore((state) => state.setTrackRegion);
+  const ensureTrackRegions = useAudioStore((state) => state.ensureTrackRegions);
+  const addTrackRegion = useAudioStore((state) => state.addTrackRegion);
+  const updateTrackRegion = useAudioStore((state) => state.updateTrackRegion);
+  const removeTrackRegion = useAudioStore((state) => state.removeTrackRegion);
+  const selectTrackRegion = useAudioStore((state) => state.selectTrackRegion);
 
   const isMobile = useMediaQuery("(max-width: 800px)");
   const view = useEffectiveView();
+
+  const regions = track?.regions ?? NO_REGIONS;
+  const selected = selectedRegion(track);
+  const selectedId = selected?.id;
 
   // Refs
   const audioContainer = useRef<HTMLDivElement | null>(null);
@@ -91,8 +150,29 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   const currentTimeRef = useRef(0);
   const inFocus = useRef(false);
 
+  /**
+   * The wavesurfer region objects this card has drawn, by our id.
+   *
+   * The store holds plain numbers and this holds the live objects, exactly as
+   * before — ticket 009's rule is unchanged by there being six of them. The two
+   * are kept in step by one reconciling effect and nothing else writes here.
+   */
+  const drawn = useRef(new Map<string, Region>());
+
+  /**
+   * True while the reconciler is writing to the plugin.
+   *
+   * `addRegion` and `remove()` both emit synchronously, so without this the
+   * card would hear its own writes and write them back. `setOptions` emits
+   * nothing at all — checked in the plugin source — so a bounds correction is
+   * already safe; creation and removal are the two that need the guard.
+   */
+  const applying = useRef(false);
+
+  /** True once this card has given the track its first region. */
+  const seeded = useRef(false);
+
   // State
-  const [selectionDuration, setSelectionDuration] = useState(0);
   const [ready, setReady] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
@@ -211,28 +291,210 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     isPlaying.current = !isPlaying.current;
   }, [wavesurfer]);
 
+  // Add zoom handler
+  const handleZoom = useCallback(
+    (value: number[]) => {
+      if (!wavesurfer) return;
+      wavesurfer.zoom(value[0]);
+    },
+    [wavesurfer]
+  );
+
   /**
-   * Fires when a drag or resize **finishes**, once, not once per frame. So the
-   * store takes one write per edit. Only the two numbers cross the boundary;
-   * the wavesurfer `Region` object stays in this component.
+   * Fires when a drag or resize **finishes**, once, not once per frame.
+   *
+   * That is the whole of undo's coalescing problem solved by the library:
+   * `region-update` fires on every frame of a drag and this does not, so
+   * dragging an edge across 200 pixels writes one region and pushes one history
+   * entry. No timer, and no coalesce key — two separate drags are two gestures
+   * and must undo separately.
    */
   const onUpdatedRegion = useCallback(
     (region: Region) => {
       if (import.meta.env.DEV) countRender("event:region-updated");
 
-      setTrackRegion(file.name, { start: region.start, end: region.end });
-      setSelectionDuration(region.end - region.start);
+      updateTrackRegion(
+        file.name,
+        region.id,
+        { start: region.start, end: region.end },
+        { label: "Move region" }
+      );
 
       if (
         isPlaying.current &&
+        region.id === useAudioStore.getState().getTrack(file.name)
+          ?.selectedRegionId &&
         (currentTimeRef.current < region.start ||
           currentTimeRef.current > region.end)
       ) {
         region.play();
       }
     },
-    [file.name, setTrackRegion]
+    [file.name, updateTrackRegion]
   );
+
+  /**
+   * Draws the store's regions onto the waveform, and nothing more.
+   *
+   * One direction only: the store is the truth and this is the picture of it.
+   * Every gesture writes to the store first, and the store's change brings this
+   * effect back to draw the result — so there is no second place that decides
+   * where a region is.
+   */
+  useEffect(() => {
+    if (!wavesurfer || !ready) return;
+
+    const wanted = new Map(regions.map((region) => [region.id, region]));
+    const minLength = MIN_REGION_SEC[view];
+    const corrections: TrackRegion[] = [];
+
+    // **Simple view alone gets the plugin's own label.**
+    //
+    // In Advanced view the overlay draws the name itself, as a label you can
+    // double-click and type into. Letting the plugin draw one too put the name
+    // on every region twice. A view switch rebuilds every region anyway —
+    // `minLength` differs and cannot be changed after creation — so this is
+    // decided once per region and never has to be undone.
+    const pluginDrawsLabel = view === "simple";
+
+    applying.current = true;
+    try {
+      // Gone from the store, or drawn under the other view's minimum length.
+      // `minLength` cannot be changed after creation — `setOptions` leaves it
+      // out on purpose — so a view switch redraws rather than adjusts.
+      for (const [id, existing] of [...drawn.current]) {
+        if (!wanted.has(id) || existing.minLength !== minLength) {
+          existing.remove();
+          drawn.current.delete(id);
+        }
+      }
+
+      for (const region of regions) {
+        const label = regionLabel(regions, region);
+
+        // Simple view never draws the selected shade. It shows one region, so
+        // there is nothing to tell apart, and it keeps exactly the colour it has
+        // always had.
+        const color =
+          !pluginDrawsLabel && region.id === selectedId
+            ? REGION_COLORS.selected
+            : REGION_COLORS.region;
+
+        const existing = drawn.current.get(region.id);
+
+        if (!existing) {
+          const created = regionsPlugin.addRegion({
+            id: region.id,
+            start: region.start,
+            end: region.end,
+            content: pluginDrawsLabel ? label : undefined,
+            color,
+            minLength,
+          });
+
+          drawn.current.set(region.id, created);
+
+          // The plugin clamps to the file's duration. A stored region past the
+          // end — the 1–100 default on a 30-second file — comes back shorter,
+          // and the store has to learn that or this effect would correct it on
+          // every run. Ticket 017 wrote the clamped bounds back for the same
+          // reason.
+          if (created.start !== region.start || created.end !== region.end) {
+            corrections.push({
+              ...region,
+              start: created.start,
+              end: created.end,
+            });
+          }
+          continue;
+        }
+
+        if (
+          existing.start !== region.start ||
+          existing.end !== region.end ||
+          existing.color !== color
+        ) {
+          existing.setOptions({
+            start: region.start,
+            end: region.end,
+            color,
+          });
+        }
+
+        if (pluginDrawsLabel && existing.content?.textContent !== label) {
+          existing.setContent(label);
+        }
+      }
+    } finally {
+      applying.current = false;
+    }
+
+    for (const correction of corrections) {
+      updateTrackRegion(
+        file.name,
+        correction.id,
+        { start: correction.start, end: correction.end },
+        { silent: true }
+      );
+    }
+  }, [
+    wavesurfer,
+    ready,
+    regions,
+    selectedId,
+    view,
+    regionsPlugin,
+    file.name,
+    updateTrackRegion,
+  ]);
+
+  /**
+   * Gives the track its first region, and keeps Simple view's promise.
+   *
+   * Two rules in one effect, because both say "this track has no regions and
+   * needs one":
+   *
+   * 1. A track that has never had a region gets the 1–100 default, clamped.
+   * 2. **Simple view always keeps one.** An Advanced user may delete every
+   *    region and leave zero — that is legal and the card says so — but Simple
+   *    view has no way to make one, so it must never be shown an empty track.
+   */
+  useEffect(() => {
+    if (!ready || !wavesurfer) return;
+
+    if (regions.length > 0) {
+      seeded.current = true;
+      return;
+    }
+
+    if (seeded.current && view !== "simple") return;
+
+    const duration = wavesurfer.getDuration();
+    ensureTrackRegions(file.name, [
+      defaultRegion(
+        Math.min(DEFAULT_REGION.start, Math.max(0, duration - 1)),
+        Math.min(DEFAULT_REGION.end, duration)
+      ),
+    ]);
+
+    seeded.current = true;
+  }, [ready, wavesurfer, regions.length, view, ensureTrackRegions, file.name]);
+
+  /**
+   * Drag on empty waveform makes a region. Advanced view only.
+   *
+   * Dragging **inside** an existing region moves it instead, because the
+   * region's own element sits above the wrapper and stops the event. So create
+   * and move never fight, and two regions can be made to overlap.
+   */
+  useEffect(() => {
+    if (!wavesurfer || !ready || view !== "advanced") return;
+
+    return regionsPlugin.enableDragSelection({
+      color: REGION_COLORS.region,
+      minLength: MIN_REGION_SEC.advanced,
+    });
+  }, [wavesurfer, ready, view, regionsPlugin]);
 
   const downloadTrimmedFile = async () => {
     setDownloading(true);
@@ -247,19 +509,27 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     }
 
     try {
-      const blob = await AudioService.sliceTrack(currentTrack, settings);
-      if (!blob) return;
+      const files = await AudioService.sliceTrackFiles(
+        exportableTrack(currentTrack, view),
+        settings,
+        { prefix: "trimmed_" }
+      );
 
-      // `AudioService.outputFileName`, not the format value with a dot in front.
-      // Opus writes a `.webm` file, so the format and the extension are two
-      // different things now and only one place knows which is which.
+      // Zero regions exports nothing, and says nothing happened rather than
+      // reporting a download that did not. Ticket 016's rule.
+      if (files.length === 0) return;
+
+      // One region keeps today's name exactly — `trimmed_<stem>.<ext>`, no
+      // suffix — because `regionFileName` leaves the suffix off when a track has
+      // one region. Nothing that works today changes.
+      if (files.length === 1) {
+        downloadBlob(files[0].blob, files[0].name);
+        return;
+      }
+
       downloadBlob(
-        blob,
-        AudioService.outputFileName(
-          file.name,
-          settings.exportFileType,
-          "trimmed_"
-        )
+        await AudioService.zipFiles(files),
+        `trimmed_${stemOf(file.name)}.zip`
       );
     } finally {
       setDownloading(false);
@@ -280,10 +550,16 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
      */
     const off: Array<() => void> = [];
 
+    /** The region the play button plays, read fresh. Never a stale closure. */
+    const playing = () =>
+      drawn.current.get(
+        selectedRegion(useAudioStore.getState().getTrack(file.name))?.id ?? ""
+      );
+
     off.push(
       wavesurfer.on("play", () => {
         isPlaying.current = true;
-        regionsPlugin.getRegions()[0].play();
+        playing()?.play();
       })
     );
 
@@ -295,7 +571,9 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
 
     off.push(
       wavesurfer.on("click", (location) => {
-        const region = regionsPlugin.getRegions()[0];
+        const region = playing();
+        if (!region) return;
+
         const start = region.start / wavesurfer.getDuration();
         const end = region.end / wavesurfer.getDuration();
 
@@ -314,57 +592,63 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     off.push(
       wavesurfer.on("ready", () => {
         setReady(true);
-
-        // Restore the region this track already has, and only fall back to the
-        // default when it has none.
-        //
-        // This card used to add `DEFAULT_REGION` every time it mounted, and then
-        // write it to the store. So the store's region was written by the card
-        // and never read back, and any remount silently reset the user's
-        // selection. See `.wayfinder/tickets/017-restore-stored-region.md`.
-        //
-        // Read through `getState`, not the `track` selector above. This runs in
-        // an event handler, so it must not make this effect depend on a value
-        // that changes on every drag.
-        const stored = useAudioStore.getState().getTrack(file.name)?.region;
-
-        const newRegion = regionsPlugin.addRegion({
-          start: stored?.start ?? DEFAULT_REGION.start,
-          end: stored?.end ?? DEFAULT_REGION.end,
-          content: "Clip",
-          color: "rgba(254, 242, 242, 0.25)",
-          minLength: 5,
-        });
-
         handleZoom([0]);
+      })
+    );
 
-        // Necessary to set region to trim if region is not changed
-        onUpdatedRegion(newRegion);
+    // On the plugin, not on wavesurfer, so the old `unAll()` never removed
+    // these and a second `ready` stacked another set on top.
+    off.push(regionsPlugin.on("region-updated", onUpdatedRegion));
 
-        // Collected too. These are on the plugin, not on wavesurfer, so the old
-        // `unAll()` never removed them and a second `ready` stacked another
-        // pair on top.
-        off.push(regionsPlugin.on("region-updated", onUpdatedRegion));
+    off.push(
+      regionsPlugin.on("region-created", (region) => {
+        // The reconciler's own creations are already in the store. Only a
+        // region the **user** dragged into being reaches the store from here,
+        // and it is adopted with the id the plugin minted, so there is one id
+        // and not two.
+        if (applying.current) return;
 
-        off.push(
-          regionsPlugin.on("region-out", (region) => {
-            region.play();
-          })
-        );
+        drawn.current.set(region.id, region);
+        addTrackRegion(file.name, {
+          ...defaultRegion(region.start, region.end),
+          id: region.id,
+        });
+      })
+    );
+
+    off.push(
+      regionsPlugin.on("region-clicked", (region) => {
+        selectTrackRegion(file.name, region.id);
+      })
+    );
+
+    off.push(
+      regionsPlugin.on("region-removed", (region) => {
+        if (applying.current) return;
+        drawn.current.delete(region.id);
+        removeTrackRegion(file.name, region.id);
+      })
+    );
+
+    off.push(
+      regionsPlugin.on("region-out", (region) => {
+        // Only the region being played loops. Regions may overlap now, so
+        // leaving one the user is not listening to must not restart playback.
+        if (region.id === playing()?.id) region.play();
       })
     );
 
     return () => off.forEach((unsubscribe) => unsubscribe());
-  }, [wavesurfer, regionsPlugin, onUpdatedRegion, file.name]);
-
-  // Add zoom handler
-  const handleZoom = useCallback(
-    (value: number[]) => {
-      if (!wavesurfer) return;
-      wavesurfer.zoom(value[0]);
-    },
-    [wavesurfer]
-  );
+  }, [
+    wavesurfer,
+    regionsPlugin,
+    onUpdatedRegion,
+    file.name,
+    addTrackRegion,
+    removeTrackRegion,
+    selectTrackRegion,
+    handleZoom,
+  ]);
 
   // Add keyboard handler
   useEffect(() => {
@@ -381,13 +665,25 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
         event.preventDefault();
         onPlayPause();
       }
+
+      // Delete removes the selected region. Advanced view only: Simple view
+      // always keeps one, so a Simple user pressing Delete would watch it come
+      // straight back.
+      if (
+        view === "advanced" &&
+        (event.code === "Delete" || event.code === "Backspace") &&
+        selectedId
+      ) {
+        event.preventDefault();
+        removeTrackRegion(file.name, selectedId);
+      }
     };
 
     document.addEventListener('keydown', handleKeyPress);
     return () => {
       document.removeEventListener('keydown', handleKeyPress);
     };
-  }, [onPlayPause]);
+  }, [onPlayPause, view, selectedId, removeTrackRegion, file.name]);
 
   useEffect(() => {
     const container = audioContainer.current;
@@ -402,12 +698,28 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
 
   // Render
   return (
-    <Card>
+    // Named so undo can scroll to the card it changed. One history serves the
+    // whole project, so the card an undo acts on is often off screen.
+    <Card data-track-card={file.name}>
       <CardContent className={`pt-8 pb-0 ${isMobile ? "px-2" : "px-6"}`}>
         {!ready && (
           <div className="text-center">
             <div>Preparing audio...</div>
           </div>
+        )}
+
+        {/*
+          The tools sit directly above the waveform they act on. They were an
+          accordion below the card, which asked the user to look away from the
+          thing they were cutting.
+        */}
+        {ready && view === "advanced" && (
+          <Suspense fallback={null}>
+            <RegionToolbar
+              fileName={file.name}
+              durationSec={wavesurfer?.getDuration() ?? 0}
+            />
+          </Suspense>
         )}
 
         <div className="w-full scrollbar-thin scrollbar-track-background scrollbar-thumb-primary hover:scrollbar-thumb-primary">
@@ -433,8 +745,17 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                 </i>
               </div>
               <div className={isMobile ? "text-sm" : ""}>
-                Selection duration: <code>{formatTime(selectionDuration)}</code>
+                Selection duration:{" "}
+                <code>
+                  {formatTime(selected ? selected.end - selected.start : 0)}
+                </code>
               </div>
+              {regions.length === 0 && (
+                <div className="mt-1 text-sm text-amber-500">
+                  No regions — this track exports nothing. Drag on the waveform
+                  to make one.
+                </div>
+              )}
               {track && <HiddenRegionsChip track={track} />}
               {/*
                 In both views, deliberately. It changes no exported file, and a
@@ -500,6 +821,27 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
         )}
 
         {/*
+          Two components that draw nothing of their own. One hangs the gain
+          line, the fade grips, the name and the delete on each region; the
+          other registers the magnet on `region-update`. Both are here rather
+          than beside `usePreview` so a Simple view user downloads neither.
+        */}
+        {ready && view === "advanced" && (
+          <Suspense fallback={null}>
+            <RegionInlineControls
+              wavesurfer={wavesurfer}
+              regionsPlugin={regionsPlugin}
+              fileName={file.name}
+            />
+            <RegionMagnet
+              wavesurfer={wavesurfer}
+              regionsPlugin={regionsPlugin}
+              file={file}
+            />
+          </Suspense>
+        )}
+
+        {/*
           The Advanced panel sits below the waveform and the controls, so
           switching view never moves the waveform. That is ticket 012's
           acceptance: the thing the user is looking at stays where it is.
@@ -521,3 +863,17 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     </Card>
   );
 });
+
+/**
+ * The track as this view exports it.
+ *
+ * **Simple view exports only the region it draws**, which is the first by start
+ * time. The others are kept, not deleted, and the chip says how many are hidden.
+ * That reversal is ticket 003's, and this is the one line that enforces it.
+ */
+function exportableTrack(track: EditorTrack, view: "simple" | "advanced") {
+  if (view === "advanced") return track;
+
+  const first = firstRegion(track.regions);
+  return { ...track, regions: first ? [first] : [] };
+}

@@ -370,11 +370,122 @@ chips that can be reordered, with draggable crossfades between them.
   `region-out → region.play()` handler reads as a loop and is not one, and never
   was.
 
+- [021 — Many regions per track](./tickets/021-many-regions-per-track.md)
+  — **built. A track holds `regions: TrackRegion[]` and a `selectedRegionId`**,
+  and all six readers changed at once. **The store's region id is the wavesurfer
+  region's id** — `RegionParams.id` is taken verbatim, so the store hands its id
+  down and a region the user drew is adopted with the id the plugin minted; one
+  id, one direction, no map with a stale half. Order is derived by start time, so
+  a drag never has to resort an array. Zero regions is legal and is not a silent
+  skip: the plan is empty, `sliceTrack` returns `null`, the zip is 22 bytes, and
+  the card says the track exports nothing. Six regions survive a real remount
+  digit for digit, floats and all. **Simple view's exported bytes are unchanged
+  against `b690dbb`** — 5,292,044 bytes, `99fbd8ef…07a7` and `f32d6274…0c7e`, run
+  side by side in two trees. The measurement cache learned to key on
+  `regionAudioSignature`, or renaming a region would throw away a loudness
+  measurement that cost a full decode. `pnpm test` 186 → 295.
+
+- [024 — Build undo: the command history](./tickets/024-build-undo-command-history.md)
+  — **built. Ctrl+Z works, and it was designed two tickets ago and never made.**
+  `history.ts` is plain state with no store and no React, so Node tests it.
+  **Dragging a region edge across 200 pixels pushes one entry, not 200** —
+  counted: 200 `pointermove` events, 1 entry, and one Ctrl+Z put the edge back to
+  3.0 s exactly. A drag needs no coalesce key at all, because `region-updated` is
+  a real gesture boundary; coalescing is for the sliders, which have none, and
+  `onValueCommit` bumps the key so the next drag undoes separately. **Redo is
+  built** although the design is silent on it, because an entry already holds both
+  halves. Depth 100. The default region a card writes on mount is deliberately
+  **not** a gesture, or the first Ctrl+Z of a session would delete a region nobody
+  made. One edit still redraws one card; the other card does not appear in the
+  render counts at all.
+
+- [022 — The region list and its gestures](./tickets/022-region-list-and-gestures.md)
+  — **built, then rebuilt. Everything a region owns is drawn on the region.**
+  The grilling answer was a list of rows under the waveform with sliders on the
+  selected row. It was built, looked at, and rejected on sight: *a row of sliders
+  below asks the user to look away from the thing they are editing, and then to
+  work out which row goes with which region.* Every DAW puts these on the clip.
+  So: a **fade grip at each top corner**, a **gain line across the region**, a
+  name you double-click and type into, an ✕ on hover — and the tools in a
+  **toolbar above the waveform**, with split-on-silence's three numbers in a
+  popover. The Advanced panel is two sections now, not three. Measured: a gain
+  line dragged 20 px on a 120 px region reads **+6.0 dB** exactly and the region
+  does not move; a fade grip dragged 100 px of 1171 gives **891 ms** exactly; one
+  history entry per drag. Three things had to be got right, and each is written
+  up in the ticket: a grip must not drag the region, the name must not be drawn
+  twice, and **an overlay must draw itself the moment it attaches** — React runs
+  a child's effects before its parent's, so every overlay first came up blank.
+  Simple view is untouched, colour and label and all. **The store is the truth and
+  the waveform is a picture of it** — one reconciling effect, one direction, and
+  two facts from the plugin's source make it safe: `setOptions` emits nothing, and
+  `addRegion`/`remove()` emit synchronously so only those need a guard. Simple
+  view keeps its 5-second minimum region; Advanced uses 0.05 s, because split on
+  silence cuts spoken phrases. **A defect was found by measuring, not by reading:**
+  a region's gain or fade changed *during playback* was not heard until the next
+  play or seek, because `usePreview`'s sync signature covered the stack and not
+  the region. Fixed, and measured — −12 dB reaches the graph at 0.386 s and a
+  750 ms fade at 0.641 s. **A playing card still renders zero times**, and no
+  wavesurfer instance is rebuilt.
+
+- [023 — Export many regions](./tickets/023-export-many-regions.md)
+  — **built. One track now writes many files, and the only region keeps today's
+  name exactly.** `sliced_hits.wav` for one; `sliced_phrases_1.wav` … `_7.wav`
+  numbered by start time; `sliced_phrases_chorus.wav` when named, and
+  `sliced_phrases_chorus (2).wav` for the second of that name, against **one
+  `taken` set for the whole export**. A name is user text, so it is sanitised
+  first: `/`, `\`, `:`, `<>"|?*`, control characters and null bytes all become
+  `-`, trailing dots go, 64 characters is the cap, and a name with no letter and
+  no digit falls back to the number rather than becoming `---`. **Progress counts
+  regions, not tracks** — `planSlices` builds every output before any of them
+  renders, so two tracks holding 7 and 1 regions report `fileCount: 8` from the
+  first tick, and 326 reports run 0 → 1 without ever going backwards.
+
+- [025 — Split on silence](./tickets/025-split-on-silence.md)
+  — **built, and the padding rule holds by construction rather than by
+  arithmetic.** Padding is never below the 20 ms fade, a gap under 40 ms is never
+  silence, and an interior edge takes at most half the gap — so every interior
+  ramp sits inside the silence and **the fade never has to be shortened**.
+  Measured, not claimed: the peak in the 20 ms around every interior boundary is
+  **0**, and a burst running 1.8–2.8 s comes back as a region of 1.7–2.9 s. Seven
+  bursts give seven regions; no silence gives one; a silent track gives zero.
+  Settings are **clamped, not refused**, because a refusal a user cannot act on
+  teaches them nothing. The scan is cut into 40-second chunks that share their
+  samples through `subarray`, and yields with a `MessageChannel` rather than
+  `setTimeout(0)`, whose 4 ms clamp would cost a quarter of a second on a
+  45-minute track. **One undo entry** puts the old list back.
+
+- [026 — Snap to transients](./tickets/026-snap-to-transients.md)
+  — **built. A magnet on a drag, and detection is accurate to 0.1 ms.** Attacks at
+  1.8, 3.6, 5.4, 7.2, 9.0 and 10.8 seconds are found at 1.8001 … 10.8001; an edge
+  at 3.48 s dragged toward 3.6001 s landed on **3.6001133786848074**. Energy rise,
+  not spectral flux, and the deciding argument is cost: the magnet must be right
+  on the first drag, so detection runs **once per track** — counted, still 1 after
+  a drag — and a 10 ms hop is refined to a single sample inside it. The radius is
+  **12 pixels**, so it scales with zoom; **Alt** lets go. wavesurfer has no snap
+  hook, so it runs in `region-update` and writes with `setOptions`, which the
+  plugin's source shows emits nothing and therefore cannot fight the drag it is
+  inside. Calling the hook from `AudioEditor` cost the Simple bundle **4.99 KiB
+  gzip**, so it lives behind `RegionMagnet`, a component that draws nothing.
+  Simple bundle 114.35 → **117.98 KiB gzip** across all six tickets, and no
+  Advanced code is in it.
+
 ## Not yet specified
 
 - Advanced panel layout for the **Sound and Export** sections. The Regions
-  section is settled: it holds the region **tools**, and the per-track region
-  **list** lives on the card (grilling, 2026-08-20, ticket 022).
+  section is settled and built: it holds the region **tools**, and the per-track
+  region **list** lives on the card (tickets 022 and 025).
+- **What else undo covers.** The command history built in ticket 024 records
+  region gestures and nothing else. Adding a file, removing a track and changing a
+  master default are not undoable, and "Clear Advanced settings" — the gesture the
+  design used to argue for one history rather than one per track — does not exist
+  yet. Each needs a snapshot shape of its own, and the track list's would hold
+  `File` objects, which would be the first history entry to count against ticket
+  007's 1 GB ceiling.
+- **Where the region tools' own settings live.** `snapToTransients` and the three
+  split-on-silence numbers survive a view switch and not a reload, because
+  `MasterDefaults` holds what an export is made of and these change no exported
+  file. Whether a working mode should persist at all is a decision nobody has
+  made, and it belongs with saved projects rather than beside it.
 - Decide-then-build chains for each of the fourteen features
 - The join strip — region order model, crossfade maths, single-file export path
 - Saved projects — OPFS schema, what is stored, when it is evicted

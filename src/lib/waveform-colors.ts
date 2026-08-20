@@ -30,3 +30,22 @@ export const WAVEFORM_COLORS = {
   /** tailwind red-500 — the played part, in both themes */
   progress: "#ef4444",
 } as const;
+
+/**
+ * The two shades a region is drawn in.
+ *
+ * `region` is the exact colour every region has had since before this map
+ * existed. `selected` is the same hue, a little more opaque, because a track can
+ * now hold six and the play button plays exactly one of them.
+ *
+ * Opacity, not a different hue: a region is an overlay, and the waveform has to
+ * stay readable through it. Half opacity was tried and washed the waveform out.
+ *
+ * **Simple view never uses `selected`.** It draws one region, so there is
+ * nothing to tell apart, and using it would change how Simple has always looked
+ * for no gain. Standing rule 4.
+ */
+export const REGION_COLORS = {
+  region: "rgba(254, 242, 242, 0.25)",
+  selected: "rgba(254, 242, 242, 0.38)",
+} as const;

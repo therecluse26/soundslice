@@ -1,9 +1,10 @@
 # 026 — Snap to transients
 
 **Type:** `wayfinder:task`
-**Status:** open
-**Assignee:** _unclaimed_
-**Blocked by:** [022 — The region list and its gestures](./022-region-list-and-gestures.md)
+**Status:** closed
+**Assignee:** build session, 2026-08-20
+**Blocked by:** none — was [022 — The region list and its gestures](./022-region-list-and-gestures.md), closed 2026-08-20
+
 **Blocks:** _none_
 **Map:** [Simple view and Advanced view](../map.md)
 
@@ -68,3 +69,64 @@ one button.
 - With the magnet off, drag behaviour is unchanged from before this ticket.
 - **A playing card still renders zero times**, ticket 020's figure.
 - `pnpm test` covers the detection as a plain function over `Float32Array`.
+
+## Resolution — 2026-08-20
+
+**Built.** A magnet on a drag, as decided. It moves nothing on its own and it
+makes no regions. The maths is [`transients.ts`](../../src/lib/transients.ts) and
+the drag behaviour is
+[`useTransientSnap.ts`](../../src/hooks/useTransientSnap.ts).
+
+### The five things weighed
+
+1. **Detection: energy rise**, and the reason is cost. There is no standard to
+   match, so the deciding argument is that the magnet must be right on the first
+   drag — which means detecting once over the whole track, 45 minutes of it. A
+   spectral method means an FFT per hop; a broadband envelope is one pass, and it
+   finds the thing a user is pointing at. Three rules turn a rise into an onset:
+   at least **6 dB** between hops, above a **−50 dBFS** floor, and no closer than
+   **50 ms** to the last one, keeping the hop that rose hardest of a cluster.
+2. **When it runs: once per track**, cached the way `preview-measurements.ts`
+   caches gains — bounded, oldest dropped first, keyed on name, size and modified
+   time. Two calls while one scan is running share it.
+3. **Magnet strength: 12 pixels.** Pixels, not seconds, so it scales with zoom.
+   In seconds it would grab a region from the other side of the screen when zoomed
+   out, and reach nothing when zoomed in.
+4. **Escape: hold Alt.** Read from a ref, because `region-update` fires dozens of
+   times a second and React state would redraw the card on every key movement.
+5. **Writing during `update` does not fight the drag** — and this is checkable,
+   not hopeful. `setOptions` in the plugin's source sets `start`, `end` and
+   `color`, calls `renderPosition()`, and **never touches the emitter**. So it
+   cannot re-enter the handler. The next frame applies the pointer delta to the
+   snapped value, which is what a magnet should feel like: the edge sticks until
+   the pointer pulls it free.
+
+The 10 ms hop is not the resolution of the answer. `refineOnset` walks the winning
+hop for the first sample that is clearly part of the new sound — twice the
+previous hop's level, or a quarter of this hop's peak, whichever is louder.
+
+### It is not in the Simple bundle, and that cost a redesign
+
+Calling this hook from `AudioEditor` pulled onset detection and the decoder into
+the Simple bundle: **+4.99 KiB gzip, measured**, for a tool Simple view cannot
+switch on. A hook cannot be called conditionally, so it now lives behind
+`RegionMagnet`, a component that draws nothing and is imported dynamically.
+Standing rule 6.
+
+### Measured
+
+- **Detection accuracy is 0.1 ms.** A file with attacks at 1.8, 3.6, 5.4, 7.2,
+  9.0 and 10.8 seconds gives 1.8001, 3.6001, 5.4001, 7.2001, 9.0001 and 10.8001.
+  The attack at t=0 is not reported, because the first hop has nothing to rise
+  from — by design, and tested.
+- **A dragged edge lands on the hit.** An edge at 3.48 s dragged five pixels
+  towards the attack at 3.6001 s landed on **3.6001133786848074** — the detected
+  transient, exactly.
+- **Detection runs once per track, not once per drag** — counted, not assumed.
+  `window.__detections` reads `{ "phrases.wav": 1 }` after the switch went on and
+  still `1` after a drag.
+- **With the magnet off, drag behaviour is unchanged.** A 200-pixel drag moved the
+  edge exactly 200 pixels and landed where it was dropped.
+- **A playing card still renders zero times**, with the magnet registered.
+- `pnpm test` covers the detection as a plain function over `Float32Array`,
+  including the binary search the magnet runs on every frame.

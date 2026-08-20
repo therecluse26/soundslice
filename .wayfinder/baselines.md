@@ -876,3 +876,131 @@ region starting at 1 s.
 
 **−25.6% against the ticket 001 baseline**, with four output formats, a bit
 depth, a sample rate, LUFS normalization and preview added along the way.
+
+---
+
+## Addendum — the Regions stretch, 2026-08-20
+
+Tickets 021 to 026 built together: many regions per track, the region list and
+its gestures, export naming, the command history, split on silence, and the
+transient magnet.
+
+### Simple view's output has not moved
+
+Two trees run side by side — this one on port 5177, commit `b690dbb` on 5178 —
+each slicing the same 30-second file through `AudioService.sliceTrack` at the same
+settings, hashing the exported bytes.
+
+| Row | Bytes | SHA-256 | Verdict |
+|---|---|---|---|
+| switches off, WAV | 5,292,044 | `99fbd8efecaf53852b51dd414bb03321b05d3b4cb10696de574bf013a84b07a7` | **identical** |
+| switches on, WAV | 5,292,044 | `f32d62741f3e2f5f12ecb731ee1a22524a422c7d419f2c8c51a911b7ec600c7e` | **identical** |
+
+The filename is `trimmed_clip-30s.wav` in both. A track's only region keeps
+today's name exactly — no suffix — which is why nothing that already works
+changed.
+
+### Bundle
+
+| Asset | After 020 | **After 026** |
+|---|---|---|
+| `index.*.js` gzip | 114.35 KiB | **117.98 KiB** |
+| `AdvancedPanel.*.js` gzip | 3.64 KiB | 4.64 KiB |
+| `RegionList.*.js` gzip | — | 1.53 KiB, on demand |
+| `RegionMagnet.*.js` gzip | — | 0.62 KiB, on demand |
+| `region-tools.*.js` gzip | — | 1.55 KiB, on demand |
+| `encode-worker.*.js` raw | 80.84 KiB | 80.84 KiB |
+
+**+3.63 KiB gzip**, and it is shared work rather than Advanced work: the store's
+region list, the command history, the region reconciler and the export naming are
+all on the Simple path. The Simple bundle was checked for Advanced strings —
+"Split on silence", "Snap to transients" and "Loudness target" are all absent.
+Only two hits appear, and both are benign: `region-tools` as a **preload
+filename** inside a dynamic-import descriptor, and "Add region" as a history
+**label** in the store.
+
+**One redesign came out of this measurement.** Calling `useTransientSnap` from
+`AudioEditor` cost **+4.99 KiB gzip** by pulling onset detection and the decoder
+into the Simple bundle. A hook cannot be called conditionally, so it moved behind
+`RegionMagnet`, a component that draws nothing and is imported dynamically.
+Standing rule 6 is measured, not assumed.
+
+### Where the Simple bundle has been
+
+| Ticket | gzip |
+|---|---|
+| 001, the baseline | 153.72 KiB |
+| 020, before this stretch | 114.35 KiB |
+| **021–026, this stretch** | **117.98 KiB** |
+
+**−23.3% against the ticket 001 baseline**, now with many regions, a region list,
+undo and redo, split on silence and the transient magnet added on top of four
+output formats, LUFS normalization and preview.
+
+### What else was measured on the running app
+
+| Claim | Figure |
+|---|---|
+| A playing card's renders | **0**, across 3 s and 12 `timeupdate` events |
+| wavesurfer instances rebuilt | **0** — 1 before playback, 1 after |
+| A 200-pixel drag's history entries | **1**, not 200 |
+| That drag's `region-updated` events | **1** |
+| Undo of that drag | 4.7418 s → **3.0 s** exactly |
+| Editing one card's region | 4 renders on that card, **0** on the other |
+| Split on silence, seven bursts | **7** regions, one undo entry |
+| Peak in the 20 ms around an interior region edge | **0** |
+| Padding kept at an interior edge | **100 ms**, to the millisecond |
+| Transient detection accuracy | **0.1 ms** (1.8 s read as 1.8001 s) |
+| Detections per track, after a drag | **1** |
+| Region gain of −6 dB, on exported bytes | **−5.999 dB** |
+| Export progress reports, two tracks of 7 and 1 regions | 326, `fileCount: 8`, **0 going backwards** |
+| `pnpm test` | 186 → **295** |
+
+### Addendum to the addendum — the inline rework, 2026-08-20
+
+The region list under the waveform was replaced by controls drawn **on** the
+region. Ticket 022 carries the reasoning; these are the numbers.
+
+| Claim | Figure |
+|---|---|
+| Gain line dragged up 20 px on a 120 px region | 0 dB → **+6.0 dB** (20/120 × 36 dB) |
+| The region's `start` during that drag | **1**, unmoved |
+| Fade-in grip dragged 100 px of 1171, on 10.2 s | 20 ms → **891 ms** |
+| Fade-out grip dragged 60 px | **543 ms** |
+| History entries per drag | **1** each |
+| ✕ on the region, then one Ctrl+Z | deleted, then restored **exactly** |
+| A playing card's renders | **0**, across 3 s and 12 `timeupdate` events |
+| wavesurfer instances rebuilt | **0** |
+| Simple view's region colour | `rgba(254, 242, 242, 0.25)`, unchanged |
+| Simple view's exported bytes | **identical** to `b690dbb`, both rows |
+| `pnpm test` | 295 → **322** |
+
+| Asset | After 026 | **After the rework** |
+|---|---|---|
+| `index.*.js` gzip | 117.98 KiB | **119.43 KiB** |
+| `AdvancedPanel.*.js` gzip | 4.64 KiB | 4.22 KiB |
+| `RegionList.*.js` gzip | 1.53 KiB | — deleted |
+| `RegionToolbar.*.js` gzip | — | 1.71 KiB, on demand |
+| `RegionInlineControls.*.js` gzip | — | 2.56 KiB, on demand |
+| `RegionMagnet.*.js` gzip | 0.62 KiB | 0.61 KiB |
+| `region-tools.*.js` gzip | 1.55 KiB | 1.56 KiB |
+
+**+1.45 KiB gzip on the Simple bundle.** No Advanced-only module is in it,
+checked by string: "Split on silence", "Delete this region", the overlay's
+`polygon(0 0` clip path, its `rgba(9, 9, 11, 0.9)` shadow, the Unicode minus
+`formatGain` writes, and `minSilenceMs` are all absent. The growth is in the
+shared path — `AudioEditor` itself and the chunk graph — and it was **not**
+isolated further than that.
+
+### One thing that was not our code
+
+`node_modules/wavesurfer.js` had been replaced by a real directory holding
+**7.8.6**, where the lockfile pins **7.8.9**. Dated 08:31 on 2026-08-20. It broke
+the build, because `exponentialZooming` is a valid `ZoomPluginOptions` key in
+7.8.9 and not in 7.8.6, and `AudioEditor` has passed it since before this map.
+
+`pnpm install --frozen-lockfile` reported "Already up to date" and did **not**
+repair it — pnpm's store still held 7.8.9 and only the link into it was wrong.
+Recreating `node_modules/wavesurfer.js` as a symlink to
+`.pnpm/wavesurfer.js@7.8.9/node_modules/wavesurfer.js` fixed it. Worth knowing,
+because it will look like a compile error in our code the next time it happens.

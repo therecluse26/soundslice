@@ -33,8 +33,15 @@ import {
   OutputFormat,
   exportSampleRate,
 } from "./output-format";
-import { outputFileName, uniqueFileName } from "./file-names";
-import { EditStack, needsMeasurement, simpleStack } from "./edit-stack";
+import { outputFileName, regionFileName, uniqueFileName } from "./file-names";
+import {
+  EditStack,
+  Region,
+  firstRegion,
+  needsMeasurement,
+  orderedRegions,
+  simpleStack,
+} from "./edit-stack";
 
 export { OutputFormat };
 
@@ -101,6 +108,24 @@ export type SliceOptions = {
   onProgress?: (progress: SliceProgress) => void;
   /** Checked between render passes. See `RenderCancelled`. */
   isCancelled?: () => boolean;
+};
+
+/**
+ * One region of one track, and the name its file will carry.
+ *
+ * An export plans every output before it renders any of them. Two reasons, and
+ * both are in ticket 023's acceptance:
+ *
+ * 1. **Progress counts regions, not tracks.** Ten tracks of six regions is sixty
+ *    renders, and a bar that counts ten sits at 10% for a long time.
+ * 2. **Names are made unique against the whole export**, not against one track,
+ *    so two tracks that each hold a region called "chorus" both arrive.
+ */
+export type SlicePlanItem = {
+  track: EditorTrack;
+  region: Region;
+  /** Already unique, already sanitised. Ready for `zip.file`. */
+  name: string;
 };
 
 export class AudioService {
@@ -174,45 +199,99 @@ export class AudioService {
    */
   static async measureFor(
     track: EditorTrack,
+    region: Region | undefined,
     settings: ExportSettings
   ): Promise<ReadonlyMap<number, number>> {
-    if (!track.region) return new Map();
+    if (!region) return new Map();
 
     const stack = this.stackFor(track, settings);
     if (!stack.some((operation) => needsMeasurement(operation))) return new Map();
 
     const fileRate = await AudioLoader.sampleRateOf(track.file);
     const rate = this.exportSampleRate(fileRate, settings);
-    const key = measurementKey(track.file.name, track.region, stack, rate);
+    const key = measurementKey(track.file.name, region, stack, rate);
 
     const known = recallMeasurement(key);
     if (known) return known;
 
     const source = await AudioLoader.loadAudioFile(track.file, () => rate);
-    const measured = await measureStack(source, track.region, stack);
+    const measured = await measureStack(source, region, stack);
 
     rememberMeasurement(key, measured);
     return measured;
   }
 
   /**
-   * Renders one track's region through its stack and encodes it.
+   * Plans every file this export will write, before it renders any of them.
    *
-   * Returns `null` when the track has no region, or when the export was
-   * cancelled. The returned `Blob` is the caller's to keep or discard.
+   * Names are made unique against `taken`, which the caller owns and shares
+   * across the whole export. Two tracks that each hold a region named "chorus"
+   * therefore give `..._chorus.wav` and `..._chorus (2).wav`, and neither is
+   * lost — `zip.file` overwrites without a word, which is the defect
+   * `uniqueFileName` exists to stop.
+   *
+   * A track with no regions contributes nothing. It is not an error and it is
+   * not silent either: the caller can see the plan is shorter than the track
+   * list and say so.
    */
-  static async sliceTrack(
-    track: EditorTrack,
+  static planSlices(
+    tracks: EditorTrack[],
     settings: ExportSettings,
-    options: SliceOptions & { fileIndex?: number; fileCount?: number } = {}
-  ): Promise<Blob | null> {
-    if (!track.region) return null;
+    taken = new Set<string>(),
+    prefix = "sliced_"
+  ): SlicePlanItem[] {
+    const extension = FORMAT_EXTENSION[settings.exportFileType];
+    const plan: SlicePlanItem[] = [];
 
+    for (const track of tracks) {
+      const ordered = orderedRegions(track.regions);
+
+      ordered.forEach((region, index) => {
+        plan.push({
+          track,
+          region,
+          name: uniqueFileName(
+            taken,
+            regionFileName(
+              track.file.name,
+              extension,
+              {
+                name: region.name,
+                number: index + 1,
+                onlyRegion: ordered.length === 1,
+              },
+              prefix
+            )
+          ),
+        });
+      });
+    }
+
+    return plan;
+  }
+
+  /**
+   * Renders one region of one track through its stack and encodes it.
+   *
+   * Returns `null` when the export was cancelled. The returned `Blob` is the
+   * caller's to keep or discard.
+   */
+  static async sliceRegion(
+    track: EditorTrack,
+    region: Region,
+    settings: ExportSettings,
+    options: SliceOptions & {
+      fileIndex?: number;
+      fileCount?: number;
+      /** What the progress line calls this output. Defaults to the source file. */
+      outputName?: string;
+    } = {}
+  ): Promise<Blob | null> {
     const report = (phase: SlicePhase, phaseProgress: number) =>
       options.onProgress?.({
         fileIndex: options.fileIndex ?? 0,
         fileCount: options.fileCount ?? 1,
-        fileName: track.file.name,
+        fileName: options.outputName ?? track.file.name,
         phase,
         phaseProgress,
       });
@@ -225,7 +304,6 @@ export class AudioService {
     );
 
     const stack = this.stackFor(track, settings);
-    const region = track.region;
 
     const rendered = await renderRegion(source, region, stack, {
       onProgress: (fraction) => report("render", fraction),
@@ -255,60 +333,129 @@ export class AudioService {
   }
 
   /**
-   * Slices every track that has a region, into one zip.
+   * Renders one track's **first region by start time**.
+   *
+   * What Simple view exports, and what the benchmark harness measures. A track
+   * with many regions has more files than this, and `sliceTrackFiles` is the one
+   * that gives them all — this is deliberately the one-file answer and it is
+   * named for what it returns.
+   *
+   * Returns `null` for a track with no regions, and for a cancelled export.
+   */
+  static async sliceTrack(
+    track: EditorTrack,
+    settings: ExportSettings,
+    options: SliceOptions & { fileIndex?: number; fileCount?: number } = {}
+  ): Promise<Blob | null> {
+    const region = firstRegion(track.regions);
+    if (!region) return null;
+
+    return this.sliceRegion(track, region, settings, options);
+  }
+
+  /**
+   * Every file one track exports, named and in start-time order.
+   *
+   * Empty for a track with no regions, which is legal and is **not** success:
+   * the caller must say nothing was exported rather than report a download that
+   * did not happen. That is the shape of the defect ticket 016 fixed.
+   */
+  static async sliceTrackFiles(
+    track: EditorTrack,
+    settings: ExportSettings,
+    options: SliceOptions & { prefix?: string } = {}
+  ): Promise<Array<{ name: string; blob: Blob }>> {
+    const plan = this.planSlices(
+      [track],
+      settings,
+      new Set<string>(),
+      options.prefix
+    );
+
+    return this.renderPlan(plan, settings, options);
+  }
+
+  /**
+   * Slices every region of every track into one zip.
    *
    * Serial, one file at a time, exactly as before. Overlapping the encode of
    * file *N* with the render of file *N+1* is possible with one worker and no
    * pool, and the worker boundary design deliberately does not build it: it
    * doubles peak memory to save a share of the work nobody has measured.
+   *
+   * **The unit is a region, not a track.** Sixty regions across ten tracks is
+   * sixty renders and the bar says so.
    */
   static async sliceAllFilesIntoZip(
     tracks: EditorTrack[],
     settings: ExportSettings,
     options: SliceOptions = {}
   ): Promise<Blob> {
-    // JSZip arrives on the click, not on page load. It is 27.5 KiB gzip and
-    // only "Slice All Files" needs it — a user who slices one track at a time
-    // never downloads it at all. That is standing rule 6 applied to a
-    // dependency rather than to a view.
+    // One `taken` set for the whole export. `clip-30s.wav` and `clip-30s.mp3`
+    // both want to be `sliced_clip-30s.wav`, and `zip.file` overwrites without
+    // a word. Three tracks used to come back as two files.
+    const plan = this.planSlices(tracks, settings);
+    const files = await this.renderPlan(plan, settings, options);
+
+    return this.zipFiles(files, (fraction) =>
+      options.onProgress?.({
+        fileIndex: Math.max(0, plan.length - 1),
+        fileCount: plan.length,
+        fileName: "",
+        phase: "zip",
+        phaseProgress: fraction,
+      })
+    );
+  }
+
+  /**
+   * Puts already-named files into one zip.
+   *
+   * JSZip arrives on the call, not on page load. It is 27.5 KiB gzip and only an
+   * export of more than one file needs it — a user who slices one region at a
+   * time never downloads it at all. That is standing rule 6 applied to a
+   * dependency rather than to a view.
+   *
+   * Every blob goes in as a `Blob`. None of them becomes a URL, so none of them
+   * is a leak — ticket 018's rule, and the reason `download.ts` is the only
+   * place an export blob URL exists.
+   */
+  static async zipFiles(
+    files: Array<{ name: string; blob: Blob }>,
+    onProgress?: (fraction: number) => void
+  ): Promise<Blob> {
     const { default: JSZip } = await import("jszip");
 
     const zip = new JSZip();
-    const usable = tracks.filter((track) => track.region);
+    for (const file of files) zip.file(file.name, file.blob);
 
-    // `clip-30s.wav` and `clip-30s.mp3` both want to be `sliced_clip-30s.wav`,
-    // and `zip.file` overwrites without a word. Three tracks used to come back
-    // as two files.
-    const taken = new Set<string>();
+    return zip.generateAsync({ type: "blob" }, (metadata) =>
+      onProgress?.(metadata.percent / 100)
+    );
+  }
 
-    for (let index = 0; index < usable.length; index++) {
-      const track = usable[index];
+  /** Renders a plan in order, reporting progress across the whole of it. */
+  private static async renderPlan(
+    plan: SlicePlanItem[],
+    settings: ExportSettings,
+    options: SliceOptions
+  ): Promise<Array<{ name: string; blob: Blob }>> {
+    const files: Array<{ name: string; blob: Blob }> = [];
 
-      const blob = await this.sliceTrack(track, settings, {
+    for (let index = 0; index < plan.length; index++) {
+      const item = plan[index];
+
+      const blob = await this.sliceRegion(item.track, item.region, settings, {
         ...options,
         fileIndex: index,
-        fileCount: usable.length,
+        fileCount: plan.length,
+        outputName: item.name,
       });
 
       if (!blob) continue;
-
-      zip.file(
-        uniqueFileName(
-          taken,
-          this.outputFileName(track.file.name, settings.exportFileType)
-        ),
-        blob
-      );
+      files.push({ name: item.name, blob });
     }
 
-    return zip.generateAsync({ type: "blob" }, (metadata) => {
-      options.onProgress?.({
-        fileIndex: Math.max(0, usable.length - 1),
-        fileCount: usable.length,
-        fileName: "",
-        phase: "zip",
-        phaseProgress: metadata.percent / 100,
-      });
-    });
+    return files;
   }
 }
