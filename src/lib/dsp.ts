@@ -194,3 +194,92 @@ export function regionFrameCount(
   const frames = Math.round((endSec - startSec) * sampleRate);
   return Math.max(1, frames);
 }
+
+/** One region's place on a joined output. */
+export type JoinedSpan = {
+  /** Where this region's audio begins in the source file, clamped to it. */
+  sourceStartSec: number;
+  /**
+   * How long it plays, in seconds, **unrounded**.
+   *
+   * This is what `AudioBufferSourceNode.start(when, offset, duration)` wants.
+   * It is deliberately not derived from `frameCount`: rounding it would change
+   * the bytes a single-region export produces today, and a join whose "off"
+   * setting changed the output would be worth nothing.
+   */
+  durationSec: number;
+  /** Its first frame on the joined output. A whole number, always. */
+  atFrame: number;
+  /** The same instant in seconds. Exact, because `atFrame` is whole. */
+  atSec: number;
+  /** How many frames it occupies. **0** for a region with nothing left in it. */
+  frameCount: number;
+};
+
+export type JoinedTimeline = {
+  /** One span per region given, **in the order given**. This does not sort. */
+  spans: JoinedSpan[];
+  /** The whole output's length in frames. Always at least 1. */
+  frameCount: number;
+};
+
+/**
+ * Where each region lands when regions are laid end to end.
+ *
+ * This is the whole of what "join" means, as arithmetic. Regions butt-join:
+ * region *k+1* starts exactly where region *k* ends, with no overlap and no
+ * gap. The audio between them, which the regions do not cover, is dropped —
+ * which is the point.
+ *
+ * **A single region is today's render, exactly.** `joinedTimeline([r], …)`
+ * returns one span at frame 0 whose `frameCount` equals
+ * `regionFrameCount(r.start, r.end, rate)`. That identity is what lets the join
+ * share one code path with the ordinary export instead of forking it, and a
+ * test asserts it.
+ *
+ * It takes `{ start, end }` rather than a `Region` so this module keeps its zero
+ * imports and a test can build a literal. It does not sort: `orderedRegions`
+ * owns the order, and one day the join strip will override it.
+ *
+ * ## Two rules that look like details and are not
+ *
+ * **Offsets accumulate in whole frames, never in seconds.** Adding 0.0213 s a
+ * thousand times drifts by samples. Adding 926 frames a thousand times cannot
+ * drift at all. `atSec` is derived from the integer, never accumulated.
+ *
+ * **A span may be 0 frames; only the total floors at 1.**
+ * `regionFrameCount` floors at 1 because `OfflineAudioContext` rejects a length
+ * of 0. A span obeys the opposite rule: a region that lies past the end of the
+ * file must take up **no room**, or every region after it would sit one frame
+ * late and the error would compound down the file.
+ */
+export function joinedTimeline(
+  regions: readonly { start: number; end: number }[],
+  sourceDurationSec: number,
+  sampleRate: number
+): JoinedTimeline {
+  const spans: JoinedSpan[] = [];
+  let atFrame = 0;
+
+  for (const region of regions) {
+    // The clamp lives here and nowhere else. It used to exist twice, in
+    // `buildGraph` and again in `renderPass`, which is two chances to disagree
+    // about what a region past the end of the file means.
+    const start = Math.max(0, Math.min(region.start, sourceDurationSec));
+    const end = Math.max(start, Math.min(region.end, sourceDurationSec));
+
+    const frameCount = Math.max(0, Math.round((end - start) * sampleRate));
+
+    spans.push({
+      sourceStartSec: start,
+      durationSec: end - start,
+      atFrame,
+      atSec: atFrame / sampleRate,
+      frameCount,
+    });
+
+    atFrame += frameCount;
+  }
+
+  return { spans, frameCount: Math.max(1, atFrame) };
+}

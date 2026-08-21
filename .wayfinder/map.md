@@ -522,6 +522,29 @@ chips that can be reordered, with draggable crossfades between them.
   which way it is set. No bundle cost; `PreviewEffects` had already put that
   component in Simple view's bundle.
 
+- [028 — Join: a track's regions as one file](./tickets/028-join-regions-into-one-file.md)
+  — **built. A track's regions export as one file, laid end to end.** The
+  control is on the master toolbar under Output Format:
+  `Separate files | One joined file`. **A join is not a new render — it is the
+  render this app already does, with N sources instead of one.**
+  `GraphPlan.region` widened to `regions`, and `regions.length === 1` is today's
+  behaviour *byte for byte*, proven by SHA-256 against hashes taken before a
+  line was written. `linkStack` and `scheduleRegionEnvelope` needed **no
+  change** — preview had already made both source-agnostic. The stack runs once
+  over the whole join, so a loudness target gives one gain for the file instead
+  of a different one per region. The podcast case measured: a 10-second file
+  split on silence gave **3** regions and a **6.600 s** joined output, dropping
+  3.4 s of silence, with the worst sample step in the whole file equal to the
+  test tone's own slope — **no click at any seam**. Preview measures the joined
+  set too, so the output meter cannot show a level the export will not produce.
+  Two things fixed alongside, both the user's call: **Simple view's Slice All
+  Files** exported every region where the card's button exported one — the
+  design said both paths, and only one obeyed — and a track is now decoded
+  **once per track** rather than once per region. Storage version 4 → 5, so
+  every stored master default resets once. Tests 414 → **446**, including the
+  first for anything that survives a reload. Simple bundle 120.35 →
+  **120.74 KiB gzip**.
+
 ## Not yet specified
 
 - Advanced panel layout for the **Export** section. It is still a form. The
@@ -546,7 +569,17 @@ chips that can be reordered, with draggable crossfades between them.
   file. Whether a working mode should persist at all is a decision nobody has
   made, and it belongs with saved projects rather than beside it.
 - Decide-then-build chains for each of the fourteen features
-- The join strip — region order model, crossfade maths, single-file export path
+- **The join strip.** Ticket 028 built the single-file export path, so what is
+  left is the reorder UI and the crossfade maths: a stored order that is not
+  start time, undo for moving a chip, and a crossfade shape. Note that
+  `scheduleRegionEnvelope` ramps **linearly**, so overlapping two regions
+  gives an equal-gain crossfade — correlated material bumps and uncorrelated
+  material dips about 3 dB in the middle. Constant power is a decision, not a
+  detail.
+- **Joining across tracks.** This map's own vision says "regions from any
+  track", and ticket 028 built one file per **track**. Cross-track needs an
+  order nobody has decided, and a rule for two tracks at different sample
+  rates or channel counts.
 - Saved projects — OPFS schema, what is stored, when it is evicted
 - "Copy settings to all tracks" — which operations copy, and which do not. Now
   sharp enough to answer, because ticket 002 has named the operation set. It

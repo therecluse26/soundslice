@@ -208,6 +208,12 @@ and the nearest one they accept is used.
 _Avoid_: frequency, resolution, kHz
 
 **Join**:
-Combining regions from any track into one output file, with crossfades between
-them.
+Exporting a track's regions as one file instead of one file each. They are laid
+end to end in order, and the audio between them is dropped. Each region keeps
+its own volume and fade edges. Crossfades are not built.
 _Avoid_: arrange, concatenate, merge, sequence
+
+**Seam**:
+Where two regions meet in a joined file. One region's fade out runs straight
+into the next one's fade in.
+_Avoid_: splice, junction, edit point

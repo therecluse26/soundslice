@@ -1,4 +1,5 @@
 import { EditorTrack } from "@/stores/audio-store";
+import { firstRegion } from "./edit-stack";
 import {
   DEFAULT_BIT_DEPTH,
   OutputFormat,
@@ -16,6 +17,8 @@ export type ExportChoice = {
   exportFileType: OutputFormat;
   bitDepth: number;
   outputSampleRate: number | null;
+  /** **Join** — one file per track. Simple view has no control for it. */
+  joinRegions: boolean;
 };
 
 /** True when this export cannot be described by Simple view's one select. */
@@ -23,7 +26,12 @@ export function isAdvancedExportChoice(choice: ExportChoice): boolean {
   return (
     !SIMPLE_FORMATS.some((format) => format === choice.exportFileType) ||
     choice.bitDepth !== DEFAULT_BIT_DEPTH ||
-    choice.outputSampleRate !== null
+    choice.outputSampleRate !== null ||
+    // `designs/view-state.md` §3 named joined output as an Advanced export
+    // choice before it existed. It folds into the same single `+= 1`: FLAC at
+    // 24-bit, joined, still reads "1 Advanced setting active", because it is
+    // still one sentence — "this export is not one Simple view could describe".
+    choice.joinRegions
   );
 }
 
@@ -84,6 +92,32 @@ export function countAdvancedSettings(
  */
 export function countHiddenRegions(track: EditorTrack): number {
   return Math.max(0, regionCount(track) - 1);
+}
+
+
+/**
+ * The track as this view exports it.
+ *
+ * **Simple view exports only the region it draws**, which is the first by start
+ * time. The others are kept, not deleted, and the chip says how many are hidden.
+ * That reversal is ticket 003's, and this is the one line that enforces it.
+ *
+ * It lives here, and not beside one of the two export buttons, because
+ * [`designs/view-state.md`](../../.wayfinder/designs/view-state.md) §4 says the
+ * rule *"applies to both export paths"* — and for a while it did not. The card's
+ * **Slice Audio** applied it and the toolbar's **Slice All Files** did not, so a
+ * four-region track in Simple view gave one file from one button and four from
+ * the other. Join made that hole visible rather than merely wrong: the batch
+ * would have joined regions the user cannot see.
+ */
+export function exportableTrack(
+  track: EditorTrack,
+  view: "simple" | "advanced"
+): EditorTrack {
+  if (view === "advanced") return track;
+
+  const first = firstRegion(track.regions);
+  return { ...track, regions: first ? [first] : [] };
 }
 
 function hasExtraRegions(track: EditorTrack): boolean {

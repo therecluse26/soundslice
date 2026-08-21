@@ -19,7 +19,7 @@
 
 import type { EditorTrack } from "@/stores/audio-store";
 import { AudioLoader } from "./audio-loader";
-import { measureStack, renderRegion } from "./render";
+import { measureStack, renderRegions } from "./render";
 import {
   measurementKey,
   recallMeasurement,
@@ -83,6 +83,26 @@ export type ExportSettings = {
    * it to a rate its encoder accepts.
    */
   outputSampleRate?: number;
+
+  /**
+   * **Join** — one file per track instead of one per region.
+   *
+   * The regions are laid end to end in the order the plan gives them, with no
+   * overlap and no crossfade. Each keeps its own gain and its own fade edges,
+   * so a seam is a fade-out immediately followed by a fade-in. Split on silence
+   * already keeps padding at each end for exactly that reason, which is why
+   * this is the right shape for de-silencing a recording.
+   *
+   * The stack runs **once** over the joined audio, so a compressor keeps its
+   * envelope across the seams and a loudness operation resolves to one gain for
+   * the file. That is the difference between joining and gluing N exports
+   * together afterwards.
+   *
+   * Optional, and it defaults to false, so every existing caller — the
+   * benchmark harness included — keeps today's behaviour without knowing the
+   * field exists.
+   */
+  joinRegions?: boolean;
 };
 
 export type SlicePhase = "render" | "encode" | "zip";
@@ -123,7 +143,17 @@ export type SliceOptions = {
  */
 export type SlicePlanItem = {
   track: EditorTrack;
-  region: Region;
+
+  /**
+   * The regions this one file holds, in output order.
+   *
+   * One entry is the ordinary case. Many is a **join** — `joinRegions` makes
+   * the unit of output a *track*, so the item carries every region it has.
+   *
+   * A plan item was already the unit of output, which is why progress needed no
+   * new code: the bar counts output files either way.
+   */
+  regions: Region[];
   /** Already unique, already sanitised. Ready for `zip.file`. */
   name: string;
 };
@@ -202,23 +232,46 @@ export class AudioService {
     region: Region | undefined,
     settings: ExportSettings
   ): Promise<ReadonlyMap<number, number>> {
-    if (!region) return new Map();
+    const regions = this.measuredRegions(track, region, settings);
+    if (regions.length === 0) return new Map();
 
     const stack = this.stackFor(track, settings);
     if (!stack.some((operation) => needsMeasurement(operation))) return new Map();
 
     const fileRate = await AudioLoader.sampleRateOf(track.file);
     const rate = this.exportSampleRate(fileRate, settings);
-    const key = measurementKey(track.file.name, region, stack, rate);
+    const key = measurementKey(track.file.name, regions, stack, rate);
 
     const known = recallMeasurement(key);
     if (known) return known;
 
     const source = await AudioLoader.loadAudioFile(track.file, () => rate);
-    const measured = await measureStack(source, region, stack);
+    const measured = await measureStack(source, regions, stack);
 
     rememberMeasurement(key, measured);
     return measured;
+  }
+
+  /**
+   * What preview has to measure to hear the level this export will produce.
+   *
+   * **With join on, that is the whole track, not the selected region.** A join
+   * resolves a loudness or peak-normalization operation to one gain for the
+   * entire joined file. Measuring one region would give preview a different
+   * gain from the one the export applies — and the output meter would then show
+   * a level the file will not have. [ADR 0001](../../docs/adr/0001-one-graph-two-contexts.md)
+   * exists to stop precisely that, and this session has already had to fix one
+   * such divergence worth 0.541 dB.
+   *
+   * With join off it is the selected region, which is what it always was.
+   */
+  private static measuredRegions(
+    track: EditorTrack,
+    region: Region | undefined,
+    settings: ExportSettings
+  ): Region[] {
+    if (settings.joinRegions) return orderedRegions(track.regions);
+    return region ? [region] : [];
   }
 
   /**
@@ -246,10 +299,30 @@ export class AudioService {
     for (const track of tracks) {
       const ordered = orderedRegions(track.regions);
 
+      // Zero regions exports nothing. Skipping here rather than downstream is
+      // what keeps `renderRegions`' own guard unreachable in practice.
+      if (ordered.length === 0) continue;
+
+      // **Join: one item per track.** `outputFileName` has been the right namer
+      // for a single output file since it was written, and this is its first
+      // caller. It gives a one-region track the same name join gives it, so
+      // turning join on cannot rename a file that was already alone.
+      if (settings.joinRegions) {
+        plan.push({
+          track,
+          regions: ordered,
+          name: uniqueFileName(
+            taken,
+            outputFileName(track.file.name, extension, prefix)
+          ),
+        });
+        continue;
+      }
+
       ordered.forEach((region, index) => {
         plan.push({
           track,
-          region,
+          regions: [region],
           name: uniqueFileName(
             taken,
             regionFileName(
@@ -271,20 +344,33 @@ export class AudioService {
   }
 
   /**
-   * Renders one region of one track through its stack and encodes it.
+   * Renders regions of one track through its stack, into one file.
+   *
+   * One region is the ordinary slice. Several are **joined** — laid end to end
+   * with the stack run once over all of them. The order is the caller's; this
+   * does not sort.
    *
    * Returns `null` when the export was cancelled. The returned `Blob` is the
    * caller's to keep or discard.
    */
-  static async sliceRegion(
+  static async sliceRegions(
     track: EditorTrack,
-    region: Region,
+    regions: readonly Region[],
     settings: ExportSettings,
     options: SliceOptions & {
       fileIndex?: number;
       fileCount?: number;
       /** What the progress line calls this output. Defaults to the source file. */
       outputName?: string;
+      /**
+       * A buffer already decoded from this track's file, at this export's rate.
+       *
+       * `renderPlan` passes one so that six regions of one track cost **one**
+       * decode instead of six. It stays the caller's — this method must not
+       * transfer it, and does not: only the freshly rendered buffer is
+       * transferred, a few lines below.
+       */
+      source?: AudioBuffer;
     } = {}
   ): Promise<Blob | null> {
     const report = (phase: SlicePhase, phaseProgress: number) =>
@@ -296,16 +382,19 @@ export class AudioService {
         phaseProgress,
       });
 
-    // One decode, at the one rate this export uses. This buffer is not cached
-    // and not shared — the design's section 6 forbids caching, and that is what
-    // makes the transfer below safe.
-    const source = await AudioLoader.loadAudioFile(track.file, (fileRate) =>
-      this.exportSampleRate(fileRate, settings)
-    );
+    // One decode per output file, at the one rate this export uses — or none at
+    // all when the caller has already decoded this track. Nothing here caches
+    // it: the design's section 6 forbids caching, and that is what makes the
+    // transfer below safe.
+    const source =
+      options.source ??
+      (await AudioLoader.loadAudioFile(track.file, (fileRate) =>
+        this.exportSampleRate(fileRate, settings)
+      ));
 
     const stack = this.stackFor(track, settings);
 
-    const rendered = await renderRegion(source, region, stack, {
+    const rendered = await renderRegions(source, regions, stack, {
       onProgress: (fraction) => report("render", fraction),
       isCancelled: options.isCancelled,
       // An export is the most expensive way to learn these gains, and it has
@@ -315,7 +404,7 @@ export class AudioService {
         rememberMeasurement(
           measurementKey(
             track.file.name,
-            region,
+            regions,
             stack,
             source.sampleRate
           ),
@@ -350,7 +439,7 @@ export class AudioService {
     const region = firstRegion(track.regions);
     if (!region) return null;
 
-    return this.sliceRegion(track, region, settings, options);
+    return this.sliceRegions(track, [region], settings, options);
   }
 
   /**
@@ -434,7 +523,26 @@ export class AudioService {
     );
   }
 
-  /** Renders a plan in order, reporting progress across the whole of it. */
+  /**
+   * Renders a plan in order, reporting progress across the whole of it.
+   *
+   * ## One decode per track, not one per file
+   *
+   * `sliceRegions` decodes the track's file when nobody hands it a buffer, so
+   * six regions of one track used to cost **six** full reads and six
+   * `decodeAudioData` calls of the same bytes. `planSlices` emits every item of
+   * a track together, so remembering the last decode and reusing it while the
+   * file name holds is enough to make that one decode.
+   *
+   * **It holds at most one buffer at a time.** Moving to a new track drops the
+   * old one on the same line that replaces it, so peak memory is exactly what
+   * it was: one decoded track, plus whatever the render in flight allocates.
+   * A map keyed by file name would hold every track at once and break the
+   * memory ceiling ticket 007 set.
+   *
+   * The buffer is never transferred. Only the freshly rendered output is, and
+   * `sliceRegions` owns that.
+   */
   private static async renderPlan(
     plan: SlicePlanItem[],
     settings: ExportSettings,
@@ -442,14 +550,30 @@ export class AudioService {
   ): Promise<Array<{ name: string; blob: Blob }>> {
     const files: Array<{ name: string; blob: Blob }> = [];
 
+    let decodedName: string | null = null;
+    let decoded: AudioBuffer | null = null;
+
     for (let index = 0; index < plan.length; index++) {
       const item = plan[index];
 
-      const blob = await this.sliceRegion(item.track, item.region, settings, {
+      if (decodedName !== item.track.file.name) {
+        // Dropped before the next is made, so two never exist together.
+        decoded = null;
+        decodedName = null;
+
+        decoded = await AudioLoader.loadAudioFile(
+          item.track.file,
+          (fileRate) => this.exportSampleRate(fileRate, settings)
+        );
+        decodedName = item.track.file.name;
+      }
+
+      const blob = await this.sliceRegions(item.track, item.regions, settings, {
         ...options,
         fileIndex: index,
         fileCount: plan.length,
         outputName: item.name,
+        source: decoded ?? undefined,
       });
 
       if (!blob) continue;

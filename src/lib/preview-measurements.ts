@@ -42,19 +42,43 @@ const MAX_ENTRIES = 32;
 
 const remembered = new Map<MeasurementKey, ReadonlyMap<number, number>>();
 
+/**
+ * What a measurement is filed under.
+ *
+ * ## Always a list, never a single region
+ *
+ * A **join** measures every region of a track at once and resolves to **one**
+ * gain for the whole joined file. Filing that where preview looks for a single
+ * region would play one region at the level the whole file wants — a
+ * disagreement between preview and export, in the one piece of state they
+ * share. [ADR 0001](../../docs/adr/0001-one-graph-two-contexts.md) exists to
+ * stop exactly that.
+ *
+ * So the second element is a **list of signatures in every case**. `[a, b]` and
+ * `[a]` then differ in what they contain rather than in how deeply `JSON`
+ * happened to nest them, and a collision is impossible rather than unlikely.
+ *
+ * A list of one is identical to what a single region produced before, by
+ * content — so a join of one region correctly reuses a measurement an ordinary
+ * slice already paid for.
+ *
+ * **Order is part of the key.** `[a, b]` and `[b, a]` are different audio once
+ * joined.
+ *
+ * `regionAudioSignature`, not the regions themselves. Ticket 021 gave a region
+ * an id and a name, and neither changes a single sample. Keying on the whole
+ * object would throw a measurement away every time a user typed a letter into
+ * the name field, and each one costs a full decode to make again.
+ */
 export function measurementKey(
   fileName: string,
-  region: Region,
+  regions: readonly Region[],
   stack: EditStack,
   sampleRate: number
 ): MeasurementKey {
-  // `regionAudioSignature`, not the region itself. Ticket 021 gave a region an
-  // id and a name, and neither changes a single sample. Keying on the whole
-  // object would throw a measurement away every time a user typed a letter into
-  // the name field, and each one costs a full decode to make again.
   return JSON.stringify([
     fileName,
-    regionAudioSignature(region),
+    regions.map(regionAudioSignature),
     stack,
     sampleRate,
   ]);

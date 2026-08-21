@@ -329,6 +329,15 @@ interface AudioState {
   outputSampleRate: number | null;
   setOutputSampleRate: (sampleRate: number | null) => void;
 
+  /**
+   * **Join** — one file per track instead of one per region. Advanced only.
+   *
+   * A master default beside the other export choices, because it decides the
+   * shape of the whole export. See `MasterDefaults.joinRegions`.
+   */
+  joinRegions: boolean;
+  setJoinRegions: (join: boolean) => void;
+
   processingLoading: boolean;
   setProcessingLoading: (loading: boolean) => void;
 
@@ -448,20 +457,28 @@ export const useAudioStore = create<AudioState>((set, get) => {
       exportFileType,
       bitDepth,
       outputSampleRate,
+      joinRegions,
     } = get();
+
+    // **Every key of `MasterDefaults`, twice.** The object below reaches
+    // `writePersisted` as `unknown`, so a key forgotten here compiles cleanly
+    // and writes a blob that `isMasterDefaults` rejects on the next load — the
+    // user silently loses every setting and nothing points back to this line.
+    // `master-defaults.test.ts` checks the round trip for exactly that reason.
+    const stored: MasterDefaults = {
+      normalizeAudio,
+      applyPostProcessing,
+      loudnessTargetLufs,
+      exportFileType,
+      bitDepth,
+      outputSampleRate,
+      joinRegions,
+    };
 
     writePersisted(
       MASTER_DEFAULTS_STORAGE_KEY,
       MASTER_DEFAULTS_STORAGE_VERSION,
-      {
-        normalizeAudio,
-        applyPostProcessing,
-        loudnessTargetLufs,
-        exportFileType,
-        bitDepth,
-        outputSampleRate,
-        [key]: value,
-      }
+      { ...stored, [key]: value }
     );
   };
 
@@ -711,6 +728,13 @@ export const useAudioStore = create<AudioState>((set, get) => {
       set({ outputSampleRate });
     },
 
+    joinRegions: storedMasterDefaults.joinRegions,
+
+    setJoinRegions: (joinRegions: boolean) => {
+      persistMasterDefault("joinRegions", joinRegions);
+      set({ joinRegions });
+    },
+
     processingLoading: false,
 
     setProcessingLoading: (processingLoading: boolean) =>
@@ -773,6 +797,7 @@ export function masterExportSettings(): ExportSettings {
     exportFileType,
     bitDepth,
     outputSampleRate,
+    joinRegions,
   } = useAudioStore.getState();
 
   return {
@@ -782,6 +807,7 @@ export function masterExportSettings(): ExportSettings {
     exportFileType,
     bitDepth,
     outputSampleRate: outputSampleRate ?? undefined,
+    joinRegions,
   };
 }
 

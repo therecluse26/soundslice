@@ -5,6 +5,7 @@ import {
   gainToDb,
   maxAmplitude,
   peakNormalizationGain,
+  joinedTimeline,
   regionFrameCount,
   rmsDbWindows,
 } from "./dsp";
@@ -174,5 +175,214 @@ describe("rmsDbWindows", () => {
     expect(Array.from(rmsDbWindows([half], 8))).toEqual(
       Array.from(rmsDbWindows([whole], 8)).slice(2)
     );
+  });
+});
+
+describe("joinedTimeline", () => {
+  it("gives no spans and one frame for no regions", () => {
+    // Total, so no caller can produce NaN. `renderRegions` throws before it
+    // ever reaches here, and an OfflineAudioContext rejects a length of 0.
+    expect(joinedTimeline([], 30, 48000)).toEqual({ spans: [], frameCount: 1 });
+  });
+
+  it("gives one region exactly what regionFrameCount gives it", () => {
+    // **This is the test that says Join-off did not change.** The whole design
+    // rests on a single region being today's render, byte for byte.
+    for (const [start, end] of [
+      [0, 10],
+      [1, 4.5],
+      [6.25, 9.75],
+      [0.333, 7.111],
+    ]) {
+      const joined = joinedTimeline([{ start, end }], 30, 48000);
+      expect(joined.frameCount).toBe(regionFrameCount(start, end, 48000));
+      expect(joined.spans[0].frameCount).toBe(joined.frameCount);
+    }
+  });
+
+  it("hands one region the three numbers source.start already gets", () => {
+    const [span] = joinedTimeline([{ start: 1.5, end: 4 }], 30, 48000).spans;
+
+    expect(span.atFrame).toBe(0);
+    expect(span.atSec).toBe(0);
+    expect(span.sourceStartSec).toBe(1.5);
+    expect(span.durationSec).toBe(2.5);
+  });
+
+  it("butt-joins two regions with no gap and no overlap", () => {
+    const joined = joinedTimeline(
+      [
+        { start: 1, end: 4.5 },
+        { start: 6.25, end: 9.75 },
+      ],
+      30,
+      48000
+    );
+
+    expect(joined.spans[0].atFrame).toBe(0);
+    expect(joined.spans[1].atFrame).toBe(joined.spans[0].frameCount);
+    expect(joined.frameCount).toBe(
+      joined.spans[0].frameCount + joined.spans[1].frameCount
+    );
+  });
+
+  it("keeps whole-frame offsets across a thousand regions", () => {
+    // A seconds-accumulating implementation passes the two-region test above
+    // and fails this one. 0.0213 s at 44100 is 939.33 frames — the kind of
+    // number that drifts.
+    const regions = Array.from({ length: 1000 }, (_, index) => ({
+      start: index * 0.0213,
+      end: index * 0.0213 + 0.0213,
+    }));
+
+    const joined = joinedTimeline(regions, 3600, 44100);
+    const each = Math.round(0.0213 * 44100);
+
+    for (const span of joined.spans) expect(Number.isInteger(span.atFrame)).toBe(true);
+    expect(joined.spans[999].atFrame).toBe(999 * each);
+  });
+
+  it("totals the rounded spans, not the rounding of the total", () => {
+    // Three spans of 0.6 of a frame each. Every one rounds **up** to 1, so the
+    // spans occupy 3 frames — while the seconds add to 1.8 frames, which rounds
+    // to 2. Summing seconds first would build a context two frames long and
+    // then write three frames into it.
+    const regions = [
+      { start: 0, end: 0.0000125 },
+      { start: 1, end: 1.0000125 },
+      { start: 2, end: 2.0000125 },
+    ];
+
+    const joined = joinedTimeline(regions, 30, 48000);
+    const summed = joined.spans.reduce((total, span) => total + span.frameCount, 0);
+
+    expect(joined.frameCount).toBe(summed);
+    expect(joined.frameCount).toBe(3);
+    expect(joined.frameCount).not.toBe(
+      Math.round(regions.reduce((t, r) => t + (r.end - r.start), 0) * 48000)
+    );
+  });
+
+  it("derives atSec from atFrame exactly, never by accumulating seconds", () => {
+    const joined = joinedTimeline(
+      [
+        { start: 0, end: 1.0 / 3 },
+        { start: 5, end: 5 + 1.0 / 3 },
+        { start: 9, end: 9 + 1.0 / 3 },
+      ],
+      30,
+      44100
+    );
+
+    for (const span of joined.spans) {
+      expect(span.atSec).toBe(span.atFrame / 44100);
+    }
+  });
+
+  it("keeps the order it was given and never sorts", () => {
+    // `orderedRegions` owns the order. `dsp.ts` must not hold a domain opinion,
+    // and the join strip will one day hand it an order that is not start time.
+    const joined = joinedTimeline(
+      [
+        { start: 9, end: 10 },
+        { start: 1, end: 3 },
+      ],
+      30,
+      48000
+    );
+
+    expect(joined.spans[0].sourceStartSec).toBe(9);
+    expect(joined.spans[1].sourceStartSec).toBe(1);
+  });
+
+  it("clamps a region that runs past the end of the file", () => {
+    const [span] = joinedTimeline([{ start: 8, end: 99 }], 10, 48000).spans;
+
+    expect(span.sourceStartSec).toBe(8);
+    expect(span.sourceStartSec + span.durationSec).toBe(10);
+  });
+
+  it("gives a region entirely past the end no room at all", () => {
+    // The floor lives on the total, not on a span. A 1-frame floor here would
+    // put every later region one frame late, and the error would compound.
+    const joined = joinedTimeline(
+      [
+        { start: 0, end: 2 },
+        { start: 50, end: 60 },
+        { start: 2, end: 4 },
+      ],
+      10,
+      48000
+    );
+
+    expect(joined.spans[1].frameCount).toBe(0);
+    expect(joined.spans[2].atFrame).toBe(joined.spans[1].atFrame);
+    expect(joined.frameCount).toBe(4 * 48000);
+  });
+
+  it("gives an inverted region zero frames, never negative", () => {
+    const joined = joinedTimeline(
+      [
+        { start: 5, end: 2 },
+        { start: 0, end: 1 },
+      ],
+      30,
+      48000
+    );
+
+    expect(joined.spans[0].durationSec).toBe(0);
+    expect(joined.spans[0].frameCount).toBe(0);
+    expect(joined.spans[1].atFrame).toBe(0);
+  });
+
+  it("clamps a region starting before zero", () => {
+    const [span] = joinedTimeline([{ start: -4, end: 2 }], 30, 48000).spans;
+
+    expect(span.sourceStartSec).toBe(0);
+    expect(span.durationSec).toBe(2);
+  });
+
+  it("still gives one frame when every region is empty", () => {
+    const joined = joinedTimeline(
+      [
+        { start: 50, end: 60 },
+        { start: 70, end: 80 },
+      ],
+      10,
+      48000
+    );
+
+    expect(joined.frameCount).toBe(1);
+  });
+
+  it("emits an overlap twice, because a join concatenates by length", () => {
+    // Two regions covering 0..10 and 5..15 make a twenty-second output, not a
+    // fifteen-second one. A join lays audio end to end; it does not merge.
+    const joined = joinedTimeline(
+      [
+        { start: 0, end: 10 },
+        { start: 5, end: 15 },
+      ],
+      30,
+      48000
+    );
+
+    expect(joined.frameCount).toBe(20 * 48000);
+  });
+
+  it("gives the same seconds at two rates, and proportional frames", () => {
+    const regions = [
+      { start: 1, end: 3 },
+      { start: 5, end: 6 },
+    ];
+
+    const at44 = joinedTimeline(regions, 30, 44100);
+    const at48 = joinedTimeline(regions, 30, 48000);
+
+    expect(at44.spans.map((s) => s.durationSec)).toEqual(
+      at48.spans.map((s) => s.durationSec)
+    );
+    expect(at44.frameCount).toBe(3 * 44100);
+    expect(at48.frameCount).toBe(3 * 48000);
   });
 });

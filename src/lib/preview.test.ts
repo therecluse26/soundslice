@@ -163,66 +163,66 @@ describe("the measurement cache", () => {
   beforeEach(forgetMeasurements);
 
   it("gives back what it was told", () => {
-    const key = measurementKey("a.wav", region, stack, 44100);
+    const key = measurementKey("a.wav", [region], stack, 44100);
     rememberMeasurement(key, gains);
 
     expect(recallMeasurement(key)).toBe(gains);
   });
 
   it("knows nothing about a key it has not seen", () => {
-    expect(recallMeasurement(measurementKey("a.wav", region, stack, 44100)))
+    expect(recallMeasurement(measurementKey("a.wav", [region], stack, 44100)))
       .toBeUndefined();
   });
 
   it("separates two files", () => {
-    rememberMeasurement(measurementKey("a.wav", region, stack, 44100), gains);
+    rememberMeasurement(measurementKey("a.wav", [region], stack, 44100), gains);
 
-    expect(recallMeasurement(measurementKey("b.wav", region, stack, 44100)))
+    expect(recallMeasurement(measurementKey("b.wav", [region], stack, 44100)))
       .toBeUndefined();
   });
 
   it("is invalidated by a moved region", () => {
-    rememberMeasurement(measurementKey("a.wav", region, stack, 44100), gains);
+    rememberMeasurement(measurementKey("a.wav", [region], stack, 44100), gains);
 
     const moved = defaultRegion(0, 30.5);
-    expect(recallMeasurement(measurementKey("a.wav", moved, stack, 44100)))
+    expect(recallMeasurement(measurementKey("a.wav", [moved], stack, 44100)))
       .toBeUndefined();
   });
 
   it("is invalidated by a changed stack", () => {
-    rememberMeasurement(measurementKey("a.wav", region, stack, 44100), gains);
+    rememberMeasurement(measurementKey("a.wav", [region], stack, 44100), gains);
 
     const louder = [{ op: "loudness" as const, targetLufs: -14, ceilingDbTp: -1 }];
-    expect(recallMeasurement(measurementKey("a.wav", region, louder, 44100)))
+    expect(recallMeasurement(measurementKey("a.wav", [region], louder, 44100)))
       .toBeUndefined();
   });
 
   it("is invalidated by a changed sample rate", () => {
     // Changing the output format can change the render rate, and the gain with
     // it. Preview must not keep answering with the old format's number.
-    rememberMeasurement(measurementKey("a.wav", region, stack, 44100), gains);
+    rememberMeasurement(measurementKey("a.wav", [region], stack, 44100), gains);
 
-    expect(recallMeasurement(measurementKey("a.wav", region, stack, 48000)))
+    expect(recallMeasurement(measurementKey("a.wav", [region], stack, 48000)))
       .toBeUndefined();
   });
 
   it("drops the least recently used once it is full", () => {
     for (let i = 0; i < 40; i++) {
-      rememberMeasurement(measurementKey(`f${i}.wav`, region, stack, 44100), gains);
+      rememberMeasurement(measurementKey(`f${i}.wav`, [region], stack, 44100), gains);
     }
 
-    expect(recallMeasurement(measurementKey("f0.wav", region, stack, 44100)))
+    expect(recallMeasurement(measurementKey("f0.wav", [region], stack, 44100)))
       .toBeUndefined();
-    expect(recallMeasurement(measurementKey("f39.wav", region, stack, 44100)))
+    expect(recallMeasurement(measurementKey("f39.wav", [region], stack, 44100)))
       .toBe(gains);
   });
 
   it("keeps an entry alive by reading it", () => {
-    const first = measurementKey("keep.wav", region, stack, 44100);
+    const first = measurementKey("keep.wav", [region], stack, 44100);
     rememberMeasurement(first, gains);
 
     for (let i = 0; i < 31; i++) {
-      rememberMeasurement(measurementKey(`f${i}.wav`, region, stack, 44100), gains);
+      rememberMeasurement(measurementKey(`f${i}.wav`, [region], stack, 44100), gains);
       // Touching it moves it back to the end of the queue.
       recallMeasurement(first);
     }
@@ -233,8 +233,8 @@ describe("the measurement cache", () => {
 
 describe("the key is a string, so it can be a Map key", () => {
   it("does not depend on object identity", () => {
-    const a = measurementKey("a.wav", defaultRegion(0, 30), [], 44100);
-    const b = measurementKey("a.wav", defaultRegion(0, 30), [], 44100);
+    const a = measurementKey("a.wav", [defaultRegion(0, 30)], [], 44100);
+    const b = measurementKey("a.wav", [defaultRegion(0, 30)], [], 44100);
 
     expect(a).toBe(b);
   });
@@ -243,8 +243,8 @@ describe("the key is a string, so it can be a Map key", () => {
     // Nothing else in the key names the format, so this is the check that the
     // rate is really in there.
     expect(OutputFormat.MP3).toBe("mp3");
-    expect(measurementKey("a.wav", defaultRegion(0, 30), [], 44100)).not.toBe(
-      measurementKey("a.wav", defaultRegion(0, 30), [], 48000)
+    expect(measurementKey("a.wav", [defaultRegion(0, 30)], [], 44100)).not.toBe(
+      measurementKey("a.wav", [defaultRegion(0, 30)], [], 48000)
     );
   });
 });

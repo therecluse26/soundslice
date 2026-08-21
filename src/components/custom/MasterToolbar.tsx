@@ -29,6 +29,7 @@ import { downloadBlob } from "@/lib/download";
 import { DownloadIcon, QuestionMarkCircledIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useEffectiveView } from "@/hooks/useEffectiveView";
+import { exportableTrack } from "@/lib/advanced-settings";
 import { countRender } from "@/lib/render-count";
 
 /**
@@ -39,6 +40,14 @@ import { countRender } from "@/lib/render-count";
  * same treatment `RegionMagnet` gets.
  */
 const LoudnessTarget = lazy(() => import("./advanced/LoudnessTarget"));
+
+/**
+ * **Join** — separate files, or one joined file per track.
+ *
+ * Under Output Format, because it is the other half of "what shape is my
+ * output". Advanced only, and lazy for the same reason as above.
+ */
+const JoinRegions = lazy(() => import("./advanced/JoinRegions"));
 
 const MasterToolbar = () => {
   if (import.meta.env.DEV) countRender("MasterToolbar");
@@ -73,8 +82,14 @@ const MasterToolbar = () => {
     setSliceProgress(null);
 
     try {
+      // **The same rule the card's own button applies.** In Simple view a track
+      // exports the one region it draws, and `designs/view-state.md` §4 says
+      // that applies to *both* export paths. This one passed raw tracks, so a
+      // four-region track gave one file from the card and four from here.
       const zip = await AudioService.sliceAllFilesIntoZip(
-        useAudioStore.getState().tracks,
+        useAudioStore
+          .getState()
+          .tracks.map((track) => exportableTrack(track, view)),
         masterExportSettings(),
         { onProgress: setSliceProgress }
       );
@@ -195,6 +210,17 @@ const MasterToolbar = () => {
                 ))}
               </SelectContent>
             </Select>
+
+            {/*
+              Advanced view only. The format decides **what kind of file**; this
+              decides **how many**. They are the two halves of one question, so
+              they sit together.
+            */}
+            {view === "advanced" && (
+              <Suspense fallback={null}>
+                <JoinRegions />
+              </Suspense>
+            )}
           </div>
 
           <div className="flex w-full">

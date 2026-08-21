@@ -27,7 +27,7 @@
 import { AudioLoader } from "@/lib/audio-loader";
 import { AudioService, OutputFormat } from "@/lib/audio-service";
 import { encode } from "@/lib/encoder";
-import { renderRegion } from "@/lib/render";
+import { renderRegions } from "@/lib/render";
 import { simpleStack, defaultRegion } from "@/lib/edit-stack";
 import { sniffSampleRate } from "@/lib/audio-format";
 import { integratedLoudness, truePeakDb } from "@/lib/loudness";
@@ -287,15 +287,15 @@ async function measureFile(name: string): Promise<FileResult> {
 
     // Replaces the old "trim only" and "pipeline only" rows together. The trim
     // is inside this now, and so is every effect.
-    say(`   render only, switches off (renderRegion, 1 pass)`);
+    say(`   render only, switches off (renderRegions, 1 pass)`);
     result.measurements.renderOff = await measure("render off", async () => {
-      const out = await renderRegion(source, region, simpleStack(SWITCHES_OFF));
+      const out = await renderRegions(source, [region], simpleStack(SWITCHES_OFF));
       void out.length;
     });
 
-    say(`   render only, switches on (renderRegion, 3 passes)`);
+    say(`   render only, switches on (renderRegions, 3 passes)`);
     result.measurements.renderOn = await measure("render on", async () => {
-      const out = await renderRegion(source, region, simpleStack(SWITCHES_ON));
+      const out = await renderRegions(source, [region], simpleStack(SWITCHES_ON));
       void out.length;
     });
 
@@ -305,9 +305,9 @@ async function measureFile(name: string): Promise<FileResult> {
     result.measurements.renderOffWithProgress = await measure(
       "render off + progress",
       async () => {
-        const out = await renderRegion(
+        const out = await renderRegions(
           source,
-          region,
+          [region],
           simpleStack(SWITCHES_OFF),
           { onProgress: () => {} }
         );
@@ -315,9 +315,9 @@ async function measureFile(name: string): Promise<FileResult> {
       }
     );
 
-    const rendered = await renderRegion(
+    const rendered = await renderRegions(
       source,
-      region,
+      [region],
       simpleStack(SWITCHES_OFF)
     );
 
@@ -343,9 +343,9 @@ async function measureFile(name: string): Promise<FileResult> {
     result.measurements.encodeWavTransferred = await measure(
       "encode wav transferred",
       async () => {
-        const fresh = await renderRegion(
+        const fresh = await renderRegions(
           source,
-          region,
+          [region],
           simpleStack(SWITCHES_OFF)
         );
         const blob = await encode(fresh, OutputFormat.WAV).done;
@@ -456,7 +456,7 @@ async function run(files: string[]) {
     AudioService,
     OutputFormat,
     encode,
-    renderRegion,
+    renderRegions,
     simpleStack,
     defaultRegion,
     sniffSampleRate,

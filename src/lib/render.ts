@@ -25,7 +25,7 @@
 import { EditStack, Operation, Region, needsMeasurement } from "./edit-stack";
 import { buildGraph, compressorSettingsIn } from "./graph";
 import { calibrateAll } from "./compressor-calibration";
-import { peakNormalizationGain, regionFrameCount } from "./dsp";
+import { joinedTimeline, peakNormalizationGain } from "./dsp";
 import { loudnessGain } from "./loudness";
 import { analyse } from "./encoder";
 import type { Analysis } from "./encode-protocol";
@@ -85,18 +85,36 @@ const PROGRESS_POINTS = 20;
 const MIN_PROGRESS_GAP_FRAMES = 1024;
 
 /**
- * Renders one region of one track through its stack.
+ * Renders a track's regions through its stack, into one buffer.
+ *
+ * **One region is the ordinary export.** Several are laid end to end — a
+ * **join** — and the stack runs once over the whole thing, so a compressor
+ * keeps its envelope across the seams and a loudness operation resolves to one
+ * gain for the file rather than a different one per region.
+ *
+ * The order is the caller's. This does not sort.
  *
  * The returned buffer is fresh and nothing else holds it, so the caller may
  * transfer it to the encode worker. That is the one safe case for transferring,
  * and the reason nothing here caches a decoded buffer.
  */
-export async function renderRegion(
+export async function renderRegions(
   source: AudioBuffer,
-  region: Region,
+  regions: readonly Region[],
   stack: EditStack,
   options: RenderOptions = {}
 ): Promise<AudioBuffer> {
+  // A track with no regions exports nothing, and `planSlices` skips it. Reaching
+  // here would build a one-frame context and write a file of silence, which is
+  // the shape of the defect ticket 016 fixed — an empty export reporting itself
+  // complete.
+  if (regions.length === 0) {
+    throw new Error(
+      "renderRegions was given no regions. A track with none exports nothing; " +
+        "planSlices skips it rather than writing a one-frame file."
+    );
+  }
+
   const totalPasses = measuringIndicesOf(stack).length + 1;
 
   const passProgress = (pass: number) =>
@@ -105,7 +123,7 @@ export async function renderRegion(
           options.onProgress!((pass + fraction) / totalPasses)
       : undefined;
 
-  const measured = await measureStack(source, region, stack, {
+  const measured = await measureStack(source, regions, stack, {
     ...options,
     onPassProgress: passProgress,
   });
@@ -114,7 +132,7 @@ export async function renderRegion(
 
   return renderPass(
     source,
-    region,
+    regions,
     stack,
     measured,
     undefined,
@@ -135,7 +153,7 @@ export async function renderRegion(
  */
 export async function measureStack(
   source: AudioBuffer,
-  region: Region,
+  regions: readonly Region[],
   stack: EditStack,
   options: RenderOptions & {
     onPassProgress?: (pass: number) => ((fraction: number) => void) | undefined;
@@ -152,9 +170,12 @@ export async function measureStack(
   for (let pass = 0; pass < measuringIndices.length; pass++) {
     const index = measuringIndices[pass];
 
+    // The truncated pass hears the **whole** joined timeline up to this
+    // operation, so `analyse` measures the file that will actually be written
+    // and `gainFor` returns one gain for all of it. Joining needed nothing here.
     const heard = await renderPass(
       source,
-      region,
+      regions,
       stack,
       measured,
       index,
@@ -221,16 +242,18 @@ function gainFor(operation: Operation, analysis: Analysis): number {
  */
 async function renderPass(
   source: AudioBuffer,
-  region: Region,
+  regions: readonly Region[],
   stack: EditStack,
   measured: ReadonlyMap<number, number>,
   upTo: number | undefined,
   onProgress: ((fraction: number) => void) | undefined
 ): Promise<AudioBuffer> {
   const sampleRate = source.sampleRate;
-  const start = Math.max(0, Math.min(region.start, source.duration));
-  const end = Math.max(start, Math.min(region.end, source.duration));
-  const frames = regionFrameCount(start, end, sampleRate);
+
+  // The clamp and the frame count live in one place now. They used to exist
+  // here and again in `buildGraph`, which is two chances to disagree about what
+  // a region past the end of the file means.
+  const frames = joinedTimeline(regions, source.duration, sampleRate).frameCount;
 
   const context = new OfflineAudioContext(
     source.numberOfChannels,
@@ -238,14 +261,14 @@ async function renderPass(
     sampleRate
   );
 
-  const graph = buildGraph(context, { source, region, stack, measured, upTo });
+  const graph = buildGraph(context, { source, regions, stack, measured, upTo });
   graph.tail.connect(context.destination);
 
   if (onProgress) scheduleProgress(context, frames, sampleRate, onProgress);
 
-  // The cut. One call, no sample loop. `AudioTrimmer.trimAudio` did this by
-  // hand and froze the page for 454 ms drawing zero frames.
-  graph.source.start(0, start, graph.durationSec);
+  // The cut. One call per region, no sample loop. `AudioTrimmer.trimAudio` did
+  // this by hand and froze the page for 454 ms drawing zero frames.
+  graph.start();
 
   return context.startRendering();
 }

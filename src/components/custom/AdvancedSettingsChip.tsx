@@ -23,6 +23,7 @@ export function AdvancedSettingsChip() {
       exportFileType: state.exportFileType,
       bitDepth: state.bitDepth,
       outputSampleRate: state.outputSampleRate,
+      joinRegions: state.joinRegions,
     })
   );
 

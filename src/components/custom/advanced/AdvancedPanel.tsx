@@ -59,8 +59,11 @@ export default function AdvancedPanel({
         <AccordionContent>
           <ExportOptions />
           <p className="text-xs text-muted-foreground">
-            One joined file, with crossfades between regions. Not built yet — the
-            join strip's own ticket.
+            <b>Separate files or one joined file</b> is on the master toolbar,
+            under Output Format — it decides the shape of the whole export, so it
+            lives with the button that performs one. Reordering the joined
+            regions, and crossfades between them, are the join strip's own
+            ticket.
           </p>
         </AccordionContent>
       </AccordionItem>

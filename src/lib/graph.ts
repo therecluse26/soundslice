@@ -19,7 +19,7 @@
  */
 
 import { EditStack, Operation, Region } from "./edit-stack";
-import { dbToGain, fadeTimes } from "./dsp";
+import { dbToGain, fadeTimes, joinedTimeline } from "./dsp";
 import { CompressorSettings, makeupGain } from "./compressor-calibration";
 
 /**
@@ -57,9 +57,25 @@ export function compressorSettingsIn(stack: EditStack): CompressorSettings[] {
 }
 
 export type GraphPlan = {
-  /** The decoded source file. The region indexes into this. */
+  /** The decoded source file. **Every** region indexes into this one buffer. */
   source: AudioBuffer;
-  region: Region;
+
+  /**
+   * The regions this graph plays, **in output order**.
+   *
+   * One is the ordinary render. Many are laid end to end — a **join** — each at
+   * its own place on the output, each keeping its own gain and fade edges.
+   *
+   * This module does not sort them and does not know the word "join".
+   * `orderedRegions` is the caller's decision, and one day the join strip will
+   * override it.
+   *
+   * `regions.length === 1` is today's graph exactly: one source, one envelope,
+   * no extra node. That identity is what lets a join share this code path
+   * rather than fork it. Standing rule 1, ADR 0001.
+   */
+  regions: readonly Region[];
+
   stack: EditStack;
 
   /**
@@ -85,12 +101,25 @@ export type GraphPlan = {
 };
 
 export type BuiltGraph = {
-  /** Not started. The caller calls `start`, because preview and export differ. */
-  source: AudioBufferSourceNode;
+  /**
+   * Starts every source this graph holds, each at its own place on the output.
+   * Call it once, after connecting `tail`.
+   *
+   * A closure, not an array of source nodes, and the reason is the arguments.
+   * A source needs three numbers — when it starts, where it reads from in the
+   * file, and how long it plays — and all three have to agree with the frame
+   * count the context was built with. Handing the caller an array hands it
+   * those three numbers to get right, N times. `render.ts` kept its own copy of
+   * the **clamp** alone and that was one number. There is nothing here to get
+   * wrong.
+   *
+   * Calling it twice throws `InvalidStateError` from the first source, which is
+   * the same failure a second `start()` has always given.
+   */
+  start: () => void;
+
   /** The last node in the chain. The caller connects it. */
   tail: AudioNode;
-  /** Region length in seconds, after clamping to the end of the file. */
-  durationSec: number;
 };
 
 /**
@@ -133,39 +162,83 @@ export function linkStack(
 }
 
 /**
- * Builds the region cut, the region's own properties, then the track's stack.
+ * Builds the region cuts, each region's own properties, then the track's stack.
  *
  * Order is fixed and it is not the canonical order's business:
  *
  * ```
- *   region:  cut → gain and fade
- *    track:  the stack, exactly as given
+ *   regions:  cut → gain and fade, one set per region
+ *     track:  the stack, exactly as given, **once** over all of them
  * ```
  *
- * The region is cut first because the region says *what audio* and the stack
+ * The regions are cut first because a region says *what audio* and the stack
  * says *how it sounds*. The stack's own order is the caller's to decide —
  * Simple view uses `simpleStack`, Advanced view lets the user drag.
+ *
+ * ## One region, or several
+ *
+ * ```
+ *   one      source ──▶ envelope ──────────────────────▶ linkStack ──▶ tail
+ *   joined   source ──▶ envelope_0 ┐
+ *            source ──▶ envelope_1 ├──▶ bus ──▶ linkStack ──▶ tail
+ *            source ──▶ envelope_k ┘
+ * ```
+ *
+ * **The stack runs once, over the whole thing.** That is the difference between
+ * a join and N separate renders, and it is the point of joining: a compressor
+ * keeps its envelope across the seams, and a loudness operation resolves to one
+ * gain for the whole file instead of a different one per region.
+ *
+ * **Every source shares the one decoded `AudioBuffer`.** A 45-minute track is
+ * 1.04 GB; a join must never hold two of them.
  */
 export function buildGraph(
   context: BaseAudioContext,
   plan: GraphPlan
 ): BuiltGraph {
-  const { source: buffer, region } = plan;
+  const { source: buffer, regions } = plan;
   const startTime = plan.startTime ?? 0;
 
-  const start = Math.max(0, Math.min(region.start, buffer.duration));
-  const end = Math.max(start, Math.min(region.end, buffer.duration));
-  const durationSec = end - start;
+  const timeline = joinedTimeline(regions, buffer.duration, buffer.sampleRate);
 
-  const source = context.createBufferSource();
-  source.buffer = buffer;
+  const heads: AudioNode[] = [];
+  const starts: Array<() => void> = [];
 
-  // The region's own gain and its fade edges, in one node. Two gain nodes in
-  // series would be identical and cost a node; one envelope carries both.
-  const envelope = regionGainNode(context, region, durationSec, startTime);
-  source.connect(envelope);
+  regions.forEach((region, index) => {
+    const span = timeline.spans[index];
+    const at = startTime + span.atSec;
 
-  return { source, tail: linkStack(context, envelope, plan), durationSec };
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+
+    // The region's own gain and its fade edges, in one node. Two gain nodes in
+    // series would be identical and cost a node; one envelope carries both.
+    // `regionGainNode` already took an absolute `startTime` — preview needed one
+    // to seek into the middle of a fade, and a join needs the same thing.
+    const envelope = regionGainNode(context, region, span.durationSec, at);
+    source.connect(envelope);
+
+    heads.push(envelope);
+    starts.push(() => source.start(at, span.sourceStartSec, span.durationSec));
+  });
+
+  // **One region takes no extra node.** A unity `GainNode` is bit-exact either
+  // way — `x * 1.0` is `x` in IEEE-754 — so this ternary buys no accuracy. It
+  // buys something better: a reviewer asking "did the ordinary export change?"
+  // has literally nothing to compare. Same nodes, same count, same arguments.
+  const from = heads.length === 1 ? heads[0] : sumInto(context, heads);
+
+  return {
+    start: () => starts.forEach((run) => run()),
+    tail: linkStack(context, from, plan),
+  };
+}
+
+/** Where many regions meet, so the chain still has exactly one head. */
+function sumInto(context: BaseAudioContext, heads: AudioNode[]): AudioNode {
+  const mix = context.createGain();
+  for (const head of heads) head.connect(mix);
+  return mix;
 }
 
 function one(node: AudioNode): Segment {

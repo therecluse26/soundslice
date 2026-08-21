@@ -94,6 +94,7 @@ describe("isAdvancedExportChoice", () => {
     exportFileType: OutputFormat.WAV,
     bitDepth: 16,
     outputSampleRate: null,
+    joinRegions: false,
   };
 
   it("says no to what Simple view can already describe", () => {
@@ -117,5 +118,22 @@ describe("isAdvancedExportChoice", () => {
     expect(isAdvancedExportChoice({ ...simple, outputSampleRate: 48000 })).toBe(
       true
     );
+  });
+
+  it("says yes to joined output, which Simple view has no control for", () => {
+    expect(isAdvancedExportChoice({ ...simple, joinRegions: true })).toBe(true);
+  });
+
+  it("still counts as one sentence when several are true at once", () => {
+    // The chip reads "1 Advanced setting active" for all of these together, not
+    // four. This function returns the boolean that single `+= 1` reads.
+    expect(
+      isAdvancedExportChoice({
+        exportFileType: OutputFormat.FLAC,
+        bitDepth: 24,
+        outputSampleRate: 96000,
+        joinRegions: true,
+      })
+    ).toBe(true);
   });
 });

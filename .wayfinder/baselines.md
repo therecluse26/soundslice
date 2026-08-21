@@ -1070,3 +1070,103 @@ bundle — checked by searching the built chunk for `#22c55e`, `Equalizer`,
 `peakOf` and `rmsOf` are in `dsp.ts` rather than `meter.ts` **because of this
 measurement**: with them in `meter.ts` the Simple bundle read 120.48, because
 importing them dragged the ballistics, the scale and the formatting along.
+
+## Addendum — Join, 2026-08-20
+
+Ticket 028. Byte-identity is the acceptance test, so the hashes below were taken
+**before a line was written**, on a 12-second 1 kHz tone at −20.00 dBFS peak.
+
+### Join off changes nothing
+
+Two regions — [1.0, 4.5] at 0 dB and [6.25, 9.75] at −3 dB — through
+EQ → compressor → loudness(−16 LUFS) → limiter, WAV 16-bit at 48 kHz.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `sliced_tone-1k_1.wav` | 672,044 | `e4851195…94d1` |
+| `sliced_tone-1k_2.wav` | 672,044 | `b83d55c4…edad` |
+
+After the change, with join off: **both identical**.
+
+### Join on
+
+| Case | Result |
+|---|---|
+| Two regions joined | one file, **1,344,044** bytes = 672,000 × 2 + 44 |
+| One region, join off | `sliced_tone-1k.wav`, `e4851195…94d1` |
+| One region, join on | `sliced_tone-1k.wav`, `e4851195…94d1` |
+
+A one-region track is the same name and the same bytes either way, which is what
+makes the switch safe to leave on.
+
+### Decodes per export
+
+| Case | Before | After |
+|---|---|---|
+| Two regions of one track, join off | 2 | **1** |
+| Two regions of one track, join on | — | **1** |
+
+`sliceRegions` decoded the whole file once per **output file**. `renderPlan` now
+holds the last decode while consecutive plan items share a track. It holds at
+most one buffer, dropped on the line that replaces it, so peak memory is
+unchanged.
+
+### The seam does not click
+
+A 10-second file: three 2-second 1 kHz tones separated by 1.5 s of silence.
+Split on silence at the defaults, then joined.
+
+| What | Reading |
+|---|---|
+| Regions found | **3** — [0.400, 2.600], [3.900, 6.100], [7.400, 9.600] |
+| Joined output | **6.600 s** — 316,800 frames |
+| Against the sum of the spans | **equal, to the frame** |
+| Silence dropped | **3.400 s** of 10 |
+| Worst sample-to-sample step in the whole file | **0.01306**, at **0.106 s** |
+
+The last row is the click test. A 1 kHz sine at 0.1 amplitude has a natural
+maximum step of `2π × 1000 ÷ 48000 × 0.1` = **0.0131**. The worst step anywhere
+in the joined file is that slope, and it falls inside the first region's own
+fade-in — not at either seam.
+
+### Preview still agrees with export
+
+One region, and one 12 dB quieter. Loudness −16 LUFS, nothing else.
+
+| Mode | Preview's gain | The exported file |
+|---|---|---|
+| Join off | 1.5853 | −19.01 dBFS |
+| Join on | 2.1775 | −16.25 dBFS |
+
+`20·log₁₀(2.1775 ÷ 1.5853)` = **2.76 dB**, and the two files differ by **2.76
+dB**. `measureFor` measures the joined set when join is on, so the output meter
+cannot show a level the export will not produce. ADR 0001 held.
+
+### Both export buttons now agree
+
+A 2-region track and a 3-region track:
+
+| View | Card's Slice Audio | Toolbar's Slice All Files |
+|---|---|---|
+| Simple, join off | 1 + 1 | **2** — was **5** |
+| Simple, join on | 1 + 1 | **2** |
+| Advanced, join off | 2 + 3 | 5 |
+| Advanced, join on | 1 + 1 | 2 |
+
+`designs/view-state.md` §4 said the Simple-view region rule applies to both
+export paths. Only one obeyed it.
+
+### Tests and bundle
+
+`pnpm exec vitest run` 414 → **446**. New: 15 for `joinedTimeline`, 15 in the
+new `master-defaults.test.ts` — the first test of anything that survives a
+reload — and 2 for `isAdvancedExportChoice`.
+
+| Chunk | Before | After |
+|---|---|---|
+| Simple view `index` | 120.35 | **120.74 KiB gzip** |
+| `JoinRegions` | — | **0.34 KiB gzip** |
+
+The 0.39 KiB Simple view gained is shared-path code: `joinedTimeline`, the plan's
+branch, the store's field. The strings `One joined file` and `Separate files`
+appear **0** times in the Simple bundle.

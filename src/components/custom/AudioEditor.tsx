@@ -39,6 +39,9 @@ import { countRender } from "@/lib/render-count";
 import { REGION_COLORS, WAVEFORM_COLORS } from "@/lib/waveform-colors";
 import { defaultRegion, firstRegion, regionLabel } from "@/lib/edit-stack";
 import { stemOf } from "@/lib/file-names";
+// Shared with `MasterToolbar`, so the two export buttons cannot disagree
+// about what Simple view exports. See the function's own comment.
+import { exportableTrack } from "@/lib/advanced-settings";
 
 /**
  * The lazy-load boundary for Advanced view.
@@ -885,16 +888,3 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   );
 });
 
-/**
- * The track as this view exports it.
- *
- * **Simple view exports only the region it draws**, which is the first by start
- * time. The others are kept, not deleted, and the chip says how many are hidden.
- * That reversal is ticket 003's, and this is the one line that enforces it.
- */
-function exportableTrack(track: EditorTrack, view: "simple" | "advanced") {
-  if (view === "advanced") return track;
-
-  const first = firstRegion(track.regions);
-  return { ...track, regions: first ? [first] : [] };
-}
