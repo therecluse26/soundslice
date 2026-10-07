@@ -40,6 +40,8 @@ import { countRender } from "@/lib/render-count";
 import { REGION_COLORS, WAVEFORM_COLORS } from "@/lib/waveform-colors";
 import { defaultRegion, firstRegion, regionLabel } from "@/lib/edit-stack";
 import { stemOf } from "@/lib/file-names";
+import { overviewPeaks, useWorkspace } from "@/stores/workspace";
+import { createPortal } from "react-dom";
 // Shared with `MasterToolbar`, so the two export buttons cannot disagree
 // about what Simple view exports. See the function's own comment.
 import { exportableTrack } from "@/lib/advanced-settings";
@@ -53,20 +55,17 @@ import { exportableTrack } from "@/lib/advanced-settings";
 const AdvancedPanel = lazy(() => import("./advanced/AdvancedPanel"));
 
 /**
- * The region tools, as a strip above the waveform.
- *
- * Advanced-only, so it sits behind its own dynamic import — standing rule 6.
+ * The open track's header and transport in Advanced view. One chunk for both,
+ * behind a dynamic import — standing rule 6.
  */
-const RegionToolbar = lazy(() => import("./advanced/RegionToolbar"));
+const TrackHeader = lazy(() => import("./advanced/TrackChrome"));
+const TrackTransport = lazy(() =>
+  import("./advanced/TrackChrome").then((m) => ({ default: m.TrackTransport }))
+);
 
-/**
- * The input and output meters, beside the play button.
- *
- * Its own chunk rather than a part of `AdvancedPanel`, because it is on screen
- * whenever an Advanced card is, and the panel is only downloaded when a section
- * is opened. Advanced-only — standing rule 6.
- */
-const TransportMeters = lazy(() => import("./advanced/TransportMeters"));
+/** Advanced view's list of this track's regions, under the transport. */
+const RegionTable = lazy(() => import("./advanced/RegionTable"));
+
 
 /**
  * A region's gain, fades, name and delete — drawn **on the region**.
@@ -100,9 +99,23 @@ interface EditorProps {
    * redraws come from its own store selector below.
    */
   file: File;
+
+  /**
+   * False while Advanced view shows another track. The card stays mounted and
+   * hidden, so it keeps its decode, zoom and playhead; it only stops playing
+   * and gives the inspector to the open track.
+   */
+  open?: boolean;
 }
 
 // Utility functions
+
+/** `m:ss.cc`, the same clock `region-table`'s `formatClock` writes. */
+const clockText = (seconds: number) => {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${(seconds - minutes * 60).toFixed(2).padStart(5, "0")}`;
+};
+
 const formatTime = (seconds: number) =>
   [seconds / 60, seconds % 60]
     .map((v) => `0${Math.floor(v)}`.slice(-2))
@@ -133,7 +146,7 @@ const MIN_REGION_SEC = { simple: 5, advanced: 0.05 } as const;
 /** Stable identity for a track that is not in the store yet. */
 const NO_REGIONS: TrackRegion[] = [];
 
-export const AudioEditor = React.memo(({ file }: EditorProps) => {
+export const AudioEditor = React.memo(({ file, open = true }: EditorProps) => {
   if (import.meta.env.DEV) countRender(`AudioEditor:${file.name}`);
 
   // Hooks
@@ -155,6 +168,9 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
 
   const isMobile = useMediaQuery("(max-width: 800px)");
   const view = useEffectiveView();
+  const advanced = view === "advanced";
+  const inspectorElement = useWorkspace((state) => state.inspectorElement);
+  const setOverview = useWorkspace((state) => state.setOverview);
 
   const regions = track?.regions ?? NO_REGIONS;
   const selected = selectedRegion(track);
@@ -165,6 +181,9 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   const isPlaying = useRef(false);
   const currentTimeRef = useRef(0);
   const inFocus = useRef(false);
+
+  /** Advanced view's clock. Written from `timeupdate`, never React state. */
+  const timeReadout = useRef<HTMLSpanElement | null>(null);
 
   /**
    * The wavesurfer region objects this card has drawn, by our id.
@@ -190,6 +209,8 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
 
   // State
   const [ready, setReady] = useState(false);
+  // Drawn by the play button. Changes on play and pause only.
+  const [playing, setPlaying] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
   /**
@@ -257,7 +278,7 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   // `timeupdate`, which redrew this whole card about sixty times a second for a
   // value it never reads. Ticket 020. The playhead lives in `currentTimeRef`.
   const wavesurfer = useWavesurferInstance(audioContainer, {
-    height: isMobile ? 80 : 100,
+    height: advanced ? 160 : isMobile ? 80 : 100,
     waveColor:
       theme === "dark"
         ? WAVEFORM_COLORS.waveDark
@@ -303,6 +324,14 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
 
       lastWidth = currentWidth;
       wavesurfer.setOptions({ container, width: currentWidth });
+
+      // The regions and timeline plugins draw only what is in view, and look
+      // again only on `scroll`. A card Advanced view kept hidden had a width
+      // of 0, so nothing was in view and no region was drawn. A scroll event
+      // on the scroll container makes them look again now there is room.
+      requestAnimationFrame(() =>
+        wavesurfer.getWrapper().parentElement?.dispatchEvent(new Event("scroll"))
+      );
     });
 
     observer.observe(container);
@@ -620,6 +649,7 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     off.push(
       wavesurfer.on("play", () => {
         isPlaying.current = true;
+        setPlaying(true);
         playing()?.play();
       })
     );
@@ -627,6 +657,9 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     off.push(
       wavesurfer.on("timeupdate", (currentTime) => {
         currentTimeRef.current = currentTime;
+        if (timeReadout.current) {
+          timeReadout.current.textContent = clockText(currentTime);
+        }
       })
     );
 
@@ -647,6 +680,7 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     off.push(
       wavesurfer.on("pause", () => {
         isPlaying.current = false;
+        setPlaying(false);
       })
     );
 
@@ -654,6 +688,14 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
       wavesurfer.on("ready", () => {
         setReady(true);
         handleZoom([0]);
+
+        // The track list's small picture of this file. Sixty points is one
+        // per three pixels of a row.
+        setOverview(file.name, {
+          peaks: overviewPeaks(wavesurfer.exportPeaks({ maxLength: 60 }), 60),
+          durationSec: wavesurfer.getDuration(),
+          channels: wavesurfer.getDecodedData()?.numberOfChannels ?? 0,
+        });
       })
     );
 
@@ -709,7 +751,14 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     removeTrackRegion,
     selectTrackRegion,
     handleZoom,
+    setOverview,
   ]);
+
+  // A hidden card falls silent. Advanced view hides every track but one, and
+  // a track you cannot see should not be playing.
+  useEffect(() => {
+    if (!open) wavesurfer?.pause();
+  }, [open, wavesurfer]);
 
   // Add keyboard handler
   useEffect(() => {
@@ -757,12 +806,81 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     });
   }, []);
 
+  const removeButton = (
+    // Both views. Taking a file off the page is not an Advanced idea, and
+    // Ctrl+Z brings it back with all its work. Ticket 030.
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-6 w-6 shrink-0 text-muted-foreground"
+      aria-label={`Remove ${file.name}`}
+      title="Remove this track (Ctrl+Z brings it back)"
+      disabled={downloading}
+      onClick={() => removeTrack(file.name)}
+    >
+      <Cross2Icon />
+    </Button>
+  );
+
+  const restoredNote = track?.restored && (
+    <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+      <span>Restored from your last session.</span>
+      {/*
+        One gesture, so Ctrl+Z brings the restored work back. The
+        region is the one a new card gets. Ticket 038.
+      */}
+      <button
+        type="button"
+        className="underline hover:text-primary"
+        onClick={() => {
+          const duration = wavesurfer?.getDuration() ?? 0;
+          startFresh(
+            file.name,
+            defaultRegion(
+              Math.min(DEFAULT_REGION.start, Math.max(0, duration - 1)),
+              Math.min(DEFAULT_REGION.end, duration)
+            )
+          );
+        }}
+      >
+        Start fresh
+      </button>
+    </div>
+  );
+
+  const noRegionsNote = regions.length === 0 && (
+    <div className="mt-1 text-sm text-amber-500">
+      No regions — this track exports nothing. Drag on the waveform
+      to make one.
+    </div>
+  );
+
+  const previewEffects = (
+    <PreviewEffects
+      fileName={file.name}
+      effects={track?.previewEffects ?? true}
+      preview={preview}
+    />
+  );
+
+  // The clock's element, from the lazy transport. Shows the playhead at once,
+  // then `timeupdate` keeps it current.
+  const setClock = useCallback((element: HTMLSpanElement | null) => {
+    timeReadout.current = element;
+    if (element) element.textContent = clockText(currentTimeRef.current);
+  }, []);
+
   // Render
   return (
     // Named so undo can scroll to the card it changed. One history serves the
     // whole project, so the card an undo acts on is often off screen.
-    <Card data-track-card={file.name}>
-      <CardContent className={`pt-8 pb-0 ${isMobile ? "px-2" : "px-6"}`}>
+    <Card
+      data-track-card={file.name}
+      className={advanced ? "border-0 bg-transparent shadow-none" : undefined}
+    >
+      <CardContent
+        className={advanced ? "p-0" : `pt-8 pb-0 ${isMobile ? "px-2" : "px-6"}`}
+      >
         {!ready && (
           <div className="text-center">
             <div>Preparing audio...</div>
@@ -774,11 +892,15 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
           accordion below the card, which asked the user to look away from the
           thing they were cutting.
         */}
-        {ready && view === "advanced" && (
-          <Suspense fallback={null}>
-            <RegionToolbar
+        {advanced && (
+          <Suspense fallback={<div className="h-12" />}>
+            <TrackHeader
               fileName={file.name}
+              ready={ready}
+              channels={ready ? wavesurfer?.getDecodedData()?.numberOfChannels ?? 0 : 0}
               durationSec={wavesurfer?.getDuration() ?? 0}
+              regionCount={regions.length}
+              removeButton={removeButton}
             />
           </Suspense>
         )}
@@ -790,7 +912,35 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
           />
         </div>
 
-        {ready && (
+        {ready && advanced && (
+          <>
+            <Suspense fallback={null}>
+              <TrackTransport
+                playing={playing}
+                onPlayPause={onPlayPause}
+                clock={setClock}
+                durationSec={wavesurfer?.getDuration() ?? 0}
+                meters={preview.meters}
+                onZoom={handleZoom}
+                downloading={downloading}
+                onSlice={downloadTrimmedFile}
+                onCancel={() => exportController.current?.abort()}
+              />
+            </Suspense>
+            <div className="mt-3 flex flex-wrap items-start gap-x-6 gap-y-2">
+              {previewEffects}
+              {restoredNote}
+              {noRegionsNote}
+            </div>
+            <div className="mt-5">
+              <Suspense fallback={null}>
+                <RegionTable fileName={file.name} />
+              </Suspense>
+            </div>
+          </>
+        )}
+
+        {ready && !advanced && (
           <div
             className={`cursor-default w-full ${
               isMobile
@@ -806,21 +956,7 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                     {file.name}
                   </i>
                 </span>
-                {/*
-                  Both views. Taking a file off the page is not an Advanced
-                  idea, and Ctrl+Z brings it back with all its work. Ticket 030.
-                */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 shrink-0 text-muted-foreground"
-                  aria-label={`Remove ${file.name}`}
-                  title="Remove this track (Ctrl+Z brings it back)"
-                  disabled={downloading}
-                  onClick={() => removeTrack(file.name)}
-                >
-                  <Cross2Icon />
-                </Button>
+                {removeButton}
               </div>
               <div className={isMobile ? "text-sm" : ""}>
                 Selection duration:{" "}
@@ -828,37 +964,8 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                   {formatTime(selected ? selected.end - selected.start : 0)}
                 </code>
               </div>
-              {track?.restored && (
-                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>Restored from your last session.</span>
-                  {/*
-                    One gesture, so Ctrl+Z brings the restored work back. The
-                    region is the one a new card gets. Ticket 038.
-                  */}
-                  <button
-                    type="button"
-                    className="underline hover:text-primary"
-                    onClick={() => {
-                      const duration = wavesurfer?.getDuration() ?? 0;
-                      startFresh(
-                        file.name,
-                        defaultRegion(
-                          Math.min(DEFAULT_REGION.start, Math.max(0, duration - 1)),
-                          Math.min(DEFAULT_REGION.end, duration)
-                        )
-                      );
-                    }}
-                  >
-                    Start fresh
-                  </button>
-                </div>
-              )}
-              {regions.length === 0 && (
-                <div className="mt-1 text-sm text-amber-500">
-                  No regions — this track exports nothing. Drag on the waveform
-                  to make one.
-                </div>
-              )}
+              {restoredNote}
+              {noRegionsNote}
               {track && <HiddenRegionsChip track={track} />}
               {/*
                 In both views, deliberately. It changes no exported file, and a
@@ -866,11 +973,7 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                 switches did. Ticket 019 records the reasoning.
               */}
               <div className="mt-2">
-                <PreviewEffects
-                  fileName={file.name}
-                  effects={track?.previewEffects ?? true}
-                  preview={preview}
-                />
+                {previewEffects}
               </div>
             </div>
             <div className="flex gap-2 items-center w-[300px]">
@@ -893,20 +996,8 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                   isMobile ? "mb-2" : ""
                 }`}
               >
-                {isPlaying.current ? <PauseIcon /> : <PlayIcon />}
+                {playing ? <PauseIcon /> : <PlayIcon />}
               </Button>
-
-              {/*
-                Advanced view only, and beside the transport because that is
-                where you are looking while a track plays. Nothing here renders
-                per frame — the level is written onto a canvas from an animation
-                frame and never becomes React state. See `useMeterPair`.
-              */}
-              {view === "advanced" && (
-                <Suspense fallback={null}>
-                  <TransportMeters meters={preview.meters} />
-                </Suspense>
-              )}
 
               {downloading ? (
                 // The running export's own button becomes its Cancel. It is
@@ -942,7 +1033,7 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
           other registers the magnet on `region-update`. Both are here rather
           than beside `usePreview` so a Simple view user downloads neither.
         */}
-        {ready && view === "advanced" && (
+        {ready && advanced && (
           <Suspense fallback={null}>
             <RegionInlineControls
               wavesurfer={wavesurfer}
@@ -958,23 +1049,25 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
         )}
 
         {/*
-          The Advanced panel sits below the waveform and the controls, so
-          switching view never moves the waveform. That is ticket 012's
-          acceptance: the thing the user is looking at stays where it is.
+          The open track's Sound and Export, drawn into the right-hand pane.
+          A portal, so the chain's meters still read this card's own preview.
         */}
-        {ready && view === "advanced" && (
-          <div className="mt-2 border-t pt-1">
+        {ready &&
+          advanced &&
+          open &&
+          inspectorElement &&
+          createPortal(
             <Suspense
               fallback={
                 <p className="py-4 text-xs text-muted-foreground">
-                  Loading advanced controls…
+                  Loading track settings…
                 </p>
               }
             >
               <AdvancedPanel fileName={file.name} meters={preview.meters} />
-            </Suspense>
-          </div>
-        )}
+            </Suspense>,
+            inspectorElement
+          )}
       </CardContent>
     </Card>
   );

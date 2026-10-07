@@ -4,7 +4,7 @@ import type RegionsPlugin from "wavesurfer.js/dist/plugins/regions";
 import type { Region as WaveSurferRegion } from "wavesurfer.js/dist/plugins/regions";
 import { selectedRegion, useAudioStore } from "@/stores/audio-store";
 import type { TrackRegion } from "@/stores/audio-store";
-import { orderedRegions, regionLabel } from "@/lib/edit-stack";
+import { orderedRegions, regionLabel, regionNumber } from "@/lib/edit-stack";
 import {
   RegionOverlay,
   createRegionOverlay,
@@ -192,6 +192,7 @@ function viewOf(
 ) {
   return {
     label: regionLabel(all, region),
+    number: regionNumber(all, region.id),
     gainDb: region.gainDb,
     fade: region.fade,
     durationSec: Math.max(0, region.end - region.start),

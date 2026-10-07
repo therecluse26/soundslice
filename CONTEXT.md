@@ -241,13 +241,36 @@ _Avoid_: export mode, arrange mode
 
 **Join order**:
 The order a track's regions play in when joined. Start time, until the user
-moves a region in the join strip.
+moves a row in the region table.
 _Avoid_: sequence, playlist, arrangement
 
-**Join strip**:
-The row of region chips in a card's Export section, shown while a join mode is
-on. It sets the join order and the crossfade at each seam.
-_Avoid_: timeline, arranger
+**Region table**:
+The list of the open track's regions under its waveform, in Advanced view: one
+row per region, with its number, name, start, length, gain, fades and time and
+pitch. While a join mode is on, the rows are the join order, and each row after
+the first holds the crossfade into it. It replaced the **join strip**, a row of
+region chips that did the same two jobs.
+_Avoid_: region list, timeline, arranger
+
+**Workspace**:
+Advanced view's layout once a track is loaded: the **track list** on the left,
+the **open track** in the middle, and the **inspector** on the right. Each side
+pane collapses to a rail.
+_Avoid_: dashboard, editor (unqualified)
+
+**Track list**:
+The workspace's left pane: one row per track, then the master defaults, then
+Slice all. Clicking a row opens that track.
+_Avoid_: sidebar, file list
+
+**Open track**:
+The one track the workspace shows. Every other track stays loaded, hidden and
+silent. Undo opens the track it changed.
+_Avoid_: active track, current track, selected track
+
+**Inspector**:
+The workspace's right pane: the open track's Sound and Export, as two tabs.
+_Avoid_: properties panel, settings panel
 
 **Seam**:
 Where two regions meet in a joined file. With no crossfade, one region's fade

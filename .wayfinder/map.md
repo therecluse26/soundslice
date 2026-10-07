@@ -106,13 +106,18 @@ Three stages, one direction: **tracks in → regions cut → files out.**
 | Sound | Two Yes/No switches | EQ, loudness target, compressor, noise reduction, time and pitch |
 | Files out | WAV or MP3 | FLAC, Opus, bit depth, sample rate, or one joined file |
 
-Each track keeps its own card and its own waveform. Tracks never play together.
-The master toolbar holds defaults; any track may override any of them.
+Each track keeps its own waveform. Tracks never play together. Simple view
+shows every track as a card, one under another. Advanced view is a **three-pane
+workspace**: the track list with the master defaults and Slice all on the left,
+**one open track** in the middle with its region table, and that track's Sound and
+Export on the right. Both side panes collapse to a rail. Any track may override
+any master default.
 
-"Arrange" is an **output choice**, not a workspace. The master toolbar offers
-`Separate files | One file per track | One file for everything`. Choosing a join
-reveals a strip of region chips that can be reordered, with a crossfade at each
-seam. Built by ticket 034.
+"Arrange" is an **output choice**, not a workspace. **Join** offers
+`Separate files | One file per track | One file for everything`. With a join on,
+the open track's region table **is** the join order: drag a row to move it, and
+set the crossfade into each row in its own column. Built by ticket 034; the table
+replaced its strip of region chips.
 
 ## Decisions so far
 
@@ -615,6 +620,20 @@ seam. Built by ticket 034.
   shine took **3.2 s** and `@mediabunny/mp3-encoder` (LAME) **4.7 s**. Shine's
   native benchmarks did not lie for the browser either. The package was removed
   again.
+- **The three-pane workspace** (no ticket; chosen from four mock-ups as option D)
+  — **built.** The stacked Advanced cards, each with two accordions, became a
+  track list, one open track and an inspector. Every card stays mounted and the
+  ones not open are hidden, so switching tracks never decodes again; a hidden
+  card pauses. Undo opens the track it changed. The inspector is a portal from
+  the open card, so its meters still read that card's preview. The waveform
+  shows each region's **number**; the region table under it gives names, times,
+  gain, fades, time and pitch, and — with a join on — the order and crossfades.
+  **Watch for:** wavesurfer's regions and timeline plugins draw only what is in
+  view and look again only on `scroll`, so a card shown after being hidden
+  dispatches one. Tests 522 → **534**; Simple bundle 124.86 → **126.00 KiB
+  gzip** — the workspace store, the peaks for the track list and the layout
+  switch. The panes, the table and the card's Advanced header and transport are
+  lazy.
 
 ## Not yet specified
 

@@ -54,7 +54,14 @@ export type DragPhase = "move" | "end";
 
 /** What the overlay draws. Everything it needs, and nothing it does not. */
 export type RegionOverlayView = {
+  /** The region's name, or "Region N". The rename box starts from it. */
   label: string;
+  /**
+   * The region's number by start time: the tag drawn on the waveform. A short
+   * region has no room for a name, and the region table beside it lists the
+   * names against the same numbers.
+   */
+  number: number;
   gainDb: number;
   fade: { inMs: number; outMs: number };
   /** The region's length in seconds, which fades are measured against. */
@@ -81,12 +88,17 @@ const FADE_SHADE = "rgba(9, 9, 11, 0.62)";
 const LINE = "rgba(250, 250, 250, 0.75)";
 const LINE_SELECTED = "rgba(250, 250, 250, 0.95)";
 
+/** The number tag's ground: dark, or red on the selected region. */
+const TAG = "rgba(9, 9, 11, 0.6)";
+const TAG_SELECTED = "#dc2626";
+
 export function createRegionOverlay(
   element: HTMLElement,
   handlers: RegionOverlayHandlers
 ): RegionOverlay {
   let view: RegionOverlayView = {
     label: "",
+    number: 0,
     gainDb: 0,
     fade: { inMs: 0, outMs: 0 },
     durationSec: 1,
@@ -162,7 +174,7 @@ export function createRegionOverlay(
     whiteSpace: "nowrap",
     padding: "0 4px",
     borderRadius: "3px",
-    background: "rgba(9, 9, 11, 0.5)",
+    background: TAG,
     color: "#fafafa",
     font: "11px/16px ui-sans-serif, system-ui, sans-serif",
     cursor: "text",
@@ -357,8 +369,10 @@ export function createRegionOverlay(
       gainGrip.style.top = `${gainLineFraction(next.gainDb) * 100}%`;
       gainLine.style.borderTopColor = next.selected ? LINE_SELECTED : LINE;
 
-      label.textContent = next.label;
+      label.textContent = String(next.number);
+      label.title = `${next.label} — double-click to rename`;
       label.style.fontWeight = next.selected ? "600" : "400";
+      label.style.background = next.selected ? TAG_SELECTED : TAG;
     },
 
     destroy() {

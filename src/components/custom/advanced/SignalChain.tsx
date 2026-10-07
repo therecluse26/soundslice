@@ -3,7 +3,7 @@ import {
   ReloadIcon,
   ResetIcon,
 } from "@radix-ui/react-icons";
-import { ChevronLeftGlyph, ChevronRightGlyph, CopyGlyph } from "./glyphs";
+import { ChevronLeftGlyph, ChevronRightGlyph, CopyGlyph, GripGlyph } from "./glyphs";
 // The app's own switch, unchanged. It is already in Simple view's bundle by way
 // of **Preview effects**, so using it here costs nothing.
 import { Switch } from "@/components/ui/switch";
@@ -77,9 +77,16 @@ import { ScaleStrip, ToolSlider } from "./ToolControls";
 export function SignalChain({
   fileName,
   meters,
+  layout = "row",
 }: {
   fileName: string;
   meters: MeterSource;
+  /**
+   * `row` lays the blocks left to right between two tall meters. `column` is
+   * the inspector's: one block per line, opening in place, with a level bar
+   * above and below. The same chain and the same gestures either way.
+   */
+  layout?: "row" | "column";
 }) {
   if (import.meta.env.DEV) countRender(`SignalChain:${fileName}`);
 
@@ -111,7 +118,8 @@ export function SignalChain({
     stack ??
     simpleStack({ normalizeAudio, applyPostProcessing, loudnessTargetLufs });
 
-  const targets = useMeterPair(meters, "vertical", true);
+  const column = layout === "column";
+  const targets = useMeterPair(meters, column ? "horizontal" : "vertical", true);
 
   /** Writes a chain onto the track. The first call claims it from the master. */
   const write = (next: EditStack, what: string) =>
@@ -166,6 +174,158 @@ export function SignalChain({
   const order = chainOrder(effective);
   const reordered = !isCanonical(effective);
 
+  const actions = (
+    <>
+      {trackCount > 1 && (
+        <button
+          type="button"
+          onClick={() => {
+            copySoundToAllTracks(fileName);
+            commit();
+          }}
+          title="Give every other track this chain. Noise reduction stays with its own recording."
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <CopyGlyph />
+          Copy to all tracks
+        </button>
+      )}
+
+      {reordered && (
+        <button
+          type="button"
+          onClick={() => reorder(sortToCanonical(effective), "reset")}
+          title="Put the blocks back in the standard order"
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ResetIcon />
+          Reset order
+        </button>
+      )}
+
+      {!inherited && (
+        <button
+          type="button"
+          onClick={() => {
+            setTrackStack(fileName, undefined, { label: "Reset sound" });
+            commit();
+            setOpen(null);
+          }}
+          title="Follow the master switches again"
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ResetIcon />
+          Reset
+        </button>
+      )}
+    </>
+  );
+
+  const openBlock = (op: OperationName) => (
+    <OpenBlock
+      fileName={fileName}
+      op={op}
+      stack={effective}
+      onChange={change}
+      onCommit={commit}
+      onShift={(delta) =>
+        reorder(shiftOperation(effective, op, delta), `${op}:${delta}`)
+      }
+    />
+  );
+
+  if (column) {
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-xs text-muted-foreground">
+          {inherited
+            ? "Following the master switches. Change anything to give this track its own."
+            : "This track has its own chain."}
+        </p>
+
+        <LineMeter
+          label="in"
+          title="Dry — what enters the chain, after the region's own gain and fades"
+          canvas={targets.input}
+          readout={targets.inputReadout}
+        />
+
+        <ol className="flex flex-col gap-1">
+          {order.map((op) => {
+            const info = blockInfo(op);
+            const operation = operationIn(effective, op);
+
+            return (
+              <li
+                key={op}
+                onDragOver={(event) => {
+                  const from = dragging.current;
+                  if (!from || from === op) return;
+
+                  event.preventDefault();
+                  const box = event.currentTarget.getBoundingClientRect();
+                  const side =
+                    event.clientY < box.top + box.height / 2 ? "before" : "after";
+                  if (dropMark?.op !== op || dropMark.side !== side) {
+                    setDropMark({ op, side });
+                  }
+                }}
+                onDrop={(event) => {
+                  const from = dragging.current;
+                  event.preventDefault();
+                  dragging.current = null;
+                  setDropMark(null);
+                  if (!from || !dropMark) return;
+
+                  reorder(
+                    moveInChain(effective, from, dropMark.op, dropMark.side),
+                    from
+                  );
+                }}
+              >
+                <BlockRow
+                  info={info}
+                  operation={operation}
+                  opened={open === op}
+                  dropSide={dropMark?.op === op ? dropMark.side : null}
+                  onOpen={() => setOpen((was) => (was === op ? null : op))}
+                  onToggle={() => toggle(info)}
+                  onDragStart={() => {
+                    dragging.current = op;
+                  }}
+                  onDragEnd={() => {
+                    dragging.current = null;
+                    setDropMark(null);
+                  }}
+                />
+                {open === op && <div className="mt-1">{openBlock(op)}</div>}
+              </li>
+            );
+          })}
+        </ol>
+
+        <LineMeter
+          label="out"
+          title="Wet — what leaves the chain and reaches the speakers"
+          canvas={targets.output}
+          readout={targets.outputReadout}
+        />
+
+        <p className="text-xs text-muted-foreground">
+          The chain is doing
+          <code ref={targets.differenceReadout} className="mx-1 text-foreground">
+            —
+          </code>
+          dB to the level, right now.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+          {actions}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-2 py-1">
       <div className="flex items-baseline justify-between gap-2">
@@ -176,48 +336,7 @@ export function SignalChain({
         </span>
 
         <div className="flex shrink-0 items-center gap-3">
-          {trackCount > 1 && (
-            <button
-              type="button"
-              onClick={() => {
-                copySoundToAllTracks(fileName);
-                commit();
-              }}
-              title="Give every other track this chain. Noise reduction stays with its own recording."
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
-            >
-              <CopyGlyph />
-              Copy to all tracks
-            </button>
-          )}
-
-          {reordered && (
-            <button
-              type="button"
-              onClick={() => reorder(sortToCanonical(effective), "reset")}
-              title="Put the blocks back in the standard order"
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
-            >
-              <ResetIcon />
-              Reset order
-            </button>
-          )}
-
-          {!inherited && (
-            <button
-              type="button"
-              onClick={() => {
-                setTrackStack(fileName, undefined, { label: "Reset sound" });
-                commit();
-                setOpen(null);
-              }}
-              title="Follow the master switches again"
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
-            >
-              <ResetIcon />
-              Reset
-            </button>
-          )}
+          {actions}
         </div>
       </div>
 
@@ -312,25 +431,14 @@ export function SignalChain({
             Written straight into the element on an animation frame. It changes
             sixty times a second and must never become React state.
           */}
-          <code ref={targets.differenceReadout} className="mx-1 text-primary">
+          <code ref={targets.differenceReadout} className="mx-1 text-foreground">
             —
           </code>
           dB to the level, right now.
         </span>
       </div>
 
-      {open && (
-        <OpenBlock
-          fileName={fileName}
-          op={open}
-          stack={effective}
-          onChange={change}
-          onCommit={commit}
-          onShift={(delta) =>
-            reorder(shiftOperation(effective, open, delta), `${open}:${delta}`)
-          }
-        />
-      )}
+      {open && openBlock(open)}
     </div>
   );
 }
@@ -360,9 +468,112 @@ function ChainMeter({
         className="h-24 w-4 rounded-sm border border-border"
         aria-label={`${label} level`}
       />
-      <code ref={readout} className="text-[10px] text-primary">
+      <code ref={readout} className="text-[10px] text-muted-foreground">
         −∞
       </code>
+    </div>
+  );
+}
+
+/** One end of the chain in the inspector: a label, a level bar, a reading. */
+function LineMeter({
+  label,
+  title,
+  canvas,
+  readout,
+}: {
+  label: string;
+  title: string;
+  canvas: RefObject<HTMLCanvasElement>;
+  readout: RefObject<HTMLElement>;
+}) {
+  return (
+    <div title={title} className="flex items-center gap-2">
+      <span className="w-7 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <canvas
+        ref={canvas}
+        className="h-2 min-w-0 flex-1 rounded-sm border border-border"
+        aria-label={`${label} level`}
+      />
+      <code ref={readout} className="w-12 shrink-0 text-right text-[10px] text-muted-foreground">
+        −∞
+      </code>
+    </div>
+  );
+}
+
+/**
+ * One block of the chain as a line of the inspector's list: grip, name,
+ * summary, switch. The same two targets as a tile — the name opens it, the
+ * switch turns it on — and the same drag, along the other axis.
+ */
+function BlockRow({
+  info,
+  operation,
+  opened,
+  dropSide,
+  onOpen,
+  onToggle,
+  onDragStart,
+  onDragEnd,
+}: {
+  info: BlockInfo;
+  operation: Operation | undefined;
+  opened: boolean;
+  dropSide: "before" | "after" | null;
+  onOpen: () => void;
+  onToggle: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+}) {
+  const on = operation !== undefined;
+
+  const edge =
+    dropSide === "before"
+      ? "shadow-[inset_0_3px_0_0_hsl(var(--primary))]"
+      : dropSide === "after"
+        ? "shadow-[inset_0_-3px_0_0_hsl(var(--primary))]"
+        : "";
+
+  return (
+    <div
+      draggable={on}
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", info.op);
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+      title={on ? `${info.what} Drag to move it in the chain.` : info.what}
+      className={`flex h-10 items-center gap-2 rounded border px-2 transition-colors ${
+        opened ? "border-foreground/50 bg-muted/60" : "border-border"
+      } ${on ? "cursor-grab active:cursor-grabbing" : ""} ${edge}`}
+    >
+      <span aria-hidden className={`text-muted-foreground ${on ? "" : "opacity-30"}`}>
+        <GripGlyph />
+      </span>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-expanded={opened}
+        className={`min-w-0 flex-1 truncate text-left text-xs font-medium hover:text-foreground ${
+          on ? "" : "text-muted-foreground"
+        }`}
+      >
+        {info.label}
+      </button>
+      <span className={`max-w-[7.5rem] truncate text-[10px] text-muted-foreground ${on ? "" : "opacity-60"}`}>
+        {!info.built ? "not built" : operation ? blockSummary(operation) : "off"}
+      </span>
+      <Switch
+        checked={on}
+        disabled={!info.built}
+        onCheckedChange={onToggle}
+        aria-label={`${info.label} on`}
+        title={info.built ? info.what : `${info.what} Not built yet.`}
+      />
     </div>
   );
 }
@@ -428,7 +639,7 @@ function BlockTile({
       onDragEnd={onDragEnd}
       title={on ? `${info.what} Drag to move it in the chain.` : info.what}
       className={`flex w-[6.75rem] shrink-0 flex-col gap-1 rounded border px-2 py-1.5 transition-colors ${
-        opened ? "border-primary bg-primary/10" : "border-border"
+        opened ? "border-foreground/50 bg-muted/60" : "border-border"
       } ${on ? "cursor-grab active:cursor-grabbing" : ""} ${edge}`}
     >
       <div className="flex items-center justify-between gap-1">

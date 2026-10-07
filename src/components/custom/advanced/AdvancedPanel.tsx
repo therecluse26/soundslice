@@ -1,36 +1,31 @@
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import { MeterSource } from "@/lib/preview";
+import { InspectorTab, useWorkspace } from "@/stores/workspace";
 import { ExportOptions } from "./ExportOptions";
+import { NarrowPanel } from "./narrow-panel";
 import { SignalChain } from "./SignalChain";
+import { FileOutGlyph, SlidersGlyph } from "./glyphs";
+
+const TABS: { id: InspectorTab; label: string; Icon: typeof SlidersGlyph }[] = [
+  { id: "sound", label: "Sound", Icon: SlidersGlyph },
+  { id: "export", label: "Export", Icon: FileOutGlyph },
+];
 
 /**
- * The Advanced view panel on a track card.
+ * **The inspector**: the open track's Sound and Export, in Advanced view's
+ * right-hand pane.
  *
- * **Two sections, not three.** The map's vision is tracks in, regions cut,
- * files out — and *regions cut* left this panel. Everything about a region is on
- * the waveform: the tools in a strip above it, and a region's own gain, fades
- * and name drawn on the region itself. A panel below the card asked the user to
- * look away from the thing they were cutting.
+ * The open track's card draws this into that pane through a portal, so the
+ * chain's meters stay wired to the card's own preview exactly as before — the
+ * pane is only where it appears.
  *
- * **Sound is a chain, not a form.** It was a slider and a note saying the rest
- * was not built. It is now the edit stack drawn in the order the audio passes
- * through it, with a live input and output meter at each end and a graphical
- * control for every block that has a shape. See `SignalChain`.
- *
- * Both sections start closed, so Advanced view opens looking almost identical to
- * Simple view.
+ * **Two tabs, one open at a time.** These were two accordions under the card,
+ * which grew the page past the next track. Regions are not here: the region
+ * table under the waveform is their list, and a region's own gain, fades and
+ * name are drawn on the region.
  *
  * **This file is the lazy-load boundary.** It is reached only through a dynamic
- * import in `AudioEditor`, so a Simple view user never downloads it. Everything
- * Advanced-only must be imported from here or below, never from a module the
- * Simple path already pulls in.
- *
- * It must have a default export, because `React.lazy` requires one.
+ * import in `AudioEditor`, so a Simple view user never downloads it. It must
+ * have a default export, because `React.lazy` requires one.
  */
 export default function AdvancedPanel({
   fileName,
@@ -39,31 +34,50 @@ export default function AdvancedPanel({
   fileName: string;
   meters: MeterSource;
 }) {
-  return (
-    <Accordion type="multiple" className="w-full">
-      <AccordionItem value="sound">
-        <AccordionTrigger>Sound</AccordionTrigger>
-        <AccordionContent>
-          {/*
-            The chain and nothing else. A master loudness target used to sit
-            above it, and the chain's own Loudness block made that two targets
-            on one screen. The master one belongs with the other master
-            defaults — it is on the toolbar now. See `LoudnessTarget`.
-          */}
-          <SignalChain fileName={fileName} meters={meters} />
-        </AccordionContent>
-      </AccordionItem>
+  const tab = useWorkspace((state) => state.inspectorTab);
+  const setTab = useWorkspace((state) => state.setInspectorTab);
 
-      <AccordionItem value="export" className="border-b-0">
-        <AccordionTrigger>Export</AccordionTrigger>
-        <AccordionContent>
-          {/*
-            This track's own export choices, and its join strip. The master
-            choices — format, depth, rate and Join — are on the toolbar.
-          */}
-          <ExportOptions fileName={fileName} />
-        </AccordionContent>
-      </AccordionItem>
-    </Accordion>
+  return (
+    <NarrowPanel.Provider value={true}>
+      <div className="flex flex-col gap-3">
+        <div
+          role="tablist"
+          aria-label="Track settings"
+          className="flex rounded-md border border-border bg-muted/30 p-0.5"
+        >
+          {TABS.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`inspector-tab-${id}`}
+              aria-selected={tab === id}
+              aria-controls="inspector-tabpanel"
+              onClick={() => setTab(id)}
+              className={`flex h-8 flex-1 items-center justify-center gap-1.5 rounded text-xs transition-colors ${
+                tab === id
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Icon />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div
+          role="tabpanel"
+          id="inspector-tabpanel"
+          aria-labelledby={`inspector-tab-${tab}`}
+        >
+          {tab === "sound" ? (
+            <SignalChain fileName={fileName} meters={meters} layout="column" />
+          ) : (
+            <ExportOptions fileName={fileName} />
+          )}
+        </div>
+      </div>
+    </NarrowPanel.Provider>
   );
 }

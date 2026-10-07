@@ -11,7 +11,14 @@ import { SliceProgressLabel } from "@/components/custom/SliceProgressLabel";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { countRender } from "@/lib/render-count";
 import { Button } from "@/components/ui/button";
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
+import { useEffectiveView } from "@/hooks/useEffectiveView";
+import { openTrackName, useWorkspace } from "@/stores/workspace";
+
+// Advanced view's two side panes. Standing rule 6: a Simple view user never
+// downloads either.
+const TrackSidebar = lazy(() => import("@/components/custom/advanced/TrackSidebar"));
+const InspectorPane = lazy(() => import("@/components/custom/advanced/InspectorPane"));
 
 export default function Dashboard() {
   if (import.meta.env.DEV) countRender("Dashboard");
@@ -50,26 +57,82 @@ export default function Dashboard() {
   // callback and never re-runs anything because of one.
   const addFiles = useAudioStore((state) => state.addFiles);
 
+  const fileNames = files.map((file) => file.name);
+  const activeTrack = useWorkspace((state) => state.activeTrack);
+  const openName = openTrackName(fileNames, activeTrack);
+
+  /**
+   * Advanced view is a **workspace** once there is a track: the track list,
+   * one open track, and its settings. Before the first track it is the same
+   * drop zone Simple view shows.
+   *
+   * **Every element keeps its place in the tree in both views.** Only class
+   * names change, and the side panes are holes in Simple view. So switching
+   * view never remounts a card, which would destroy its wavesurfer and decode
+   * the file again, and never remounts the uploader mid-upload.
+   *
+   * Every card stays mounted in Advanced view; the ones not open are hidden.
+   * Switching tracks is then instant, and each keeps its zoom and playhead.
+   */
+  const advanced = useEffectiveView() === "advanced" && files.length > 0;
+
   return (
     <>
-      <div className="flex-grow flex flex-col">
-        <div className="container px-4 md:px-8 flex-grow flex flex-col">
+      <div
+        className={
+          advanced
+            ? "relative flex h-full min-h-0 w-full"
+            : "flex-grow flex flex-col"
+        }
+      >
+        {advanced && (
+          <Suspense fallback={null}>
+            <TrackSidebar fileNames={fileNames} openName={openName} />
+          </Suspense>
+        )}
+
+        <div
+          className={
+            advanced
+              ? "h-full min-w-0 flex-1 overflow-y-auto px-6 py-4"
+              : "container px-4 md:px-8 flex-grow flex flex-col"
+          }
+        >
           <div>
-            <BrowserMultiFileUpload onFilesReady={addFiles} />
+            {/*
+              Kept mounted while hidden: Advanced view's track list has its own
+              small Add button, and unmounting this one would drop an upload
+              that is still reading.
+            */}
+            <div className={advanced ? "hidden" : undefined}>
+              <BrowserMultiFileUpload onFilesReady={addFiles} />
+            </div>
             <RefusedFilesNotice />
             {files.length > 0 && (
               <div>
-                <AdvancedSettingsChip />
-                <MasterToolbar />
-                {files.map((file) => (
-                  <div key={file.name} className={"my-4"}>
-                    <AudioEditor file={file} />
-                  </div>
-                ))}
+                {!advanced && <AdvancedSettingsChip />}
+                {!advanced && <MasterToolbar />}
+                {files.map((file) => {
+                  const open = !advanced || file.name === openName;
+                  return (
+                    <div
+                      key={file.name}
+                      className={advanced ? (open ? undefined : "hidden") : "my-4"}
+                    >
+                      <AudioEditor file={file} open={open} />
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
         </div>
+
+        {advanced && (
+          <Suspense fallback={null}>
+            <InspectorPane />
+          </Suspense>
+        )}
       </div>
 
       {/*

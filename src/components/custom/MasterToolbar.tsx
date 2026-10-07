@@ -15,8 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { masterExportSettings, useAudioStore } from "@/stores/audio-store";
-import { AudioService } from "@/lib/audio-service";
+import { useAudioStore } from "@/stores/audio-store";
 import {
   ADVANCED_FORMATS,
   FORMAT_LABEL,
@@ -25,11 +24,10 @@ import {
   needsWebCodecs,
 } from "@/lib/output-format";
 import { canEncodeOpus } from "@/lib/encode-capabilities";
-import { downloadBlob } from "@/lib/download";
 import { DownloadIcon, QuestionMarkCircledIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useEffectiveView } from "@/hooks/useEffectiveView";
-import { exportableTrack } from "@/lib/advanced-settings";
+import { useSliceAll } from "@/hooks/useSliceAll";
 import { countRender } from "@/lib/render-count";
 
 /**
@@ -66,55 +64,11 @@ const MasterToolbar = () => {
   );
   const exportFileType = useAudioStore((state) => state.exportFileType);
   const setExportFileType = useAudioStore((state) => state.setExportFileType);
-  const setProcessingLoading = useAudioStore(
-    (state) => state.setProcessingLoading
-  );
-  const setSliceProgress = useAudioStore((state) => state.setSliceProgress);
-  const setExportController = useAudioStore(
-    (state) => state.setExportController
-  );
-
-  const [downloading, setDownloading] = useState(false);
+  const { downloading, sliceAll: handleExportFiles } = useSliceAll();
 
   const isMobile = useMediaQuery("(max-width: 800px)");
   const view = useEffectiveView();
   const formats = useOfferedFormats(view === "advanced", exportFileType);
-
-  const handleExportFiles = async () => {
-    setDownloading(true);
-    setProcessingLoading(true);
-    setSliceProgress(null);
-
-    // The overlay's Cancel reads this from the store. Ticket 035.
-    const controller = new AbortController();
-    setExportController(controller);
-
-    try {
-      // **The same rule the card's own button applies.** In Simple view a track
-      // exports the one region it draws, and `designs/view-state.md` §4 says
-      // that applies to *both* export paths. This one passed raw tracks, so a
-      // four-region track gave one file from the card and four from here.
-      const zip = await AudioService.sliceAllFilesIntoZip(
-        useAudioStore
-          .getState()
-          .tracks.map((track) => exportableTrack(track, view)),
-        masterExportSettings(),
-        { onProgress: setSliceProgress, signal: controller.signal }
-      );
-
-      // Cancelled: nothing is downloaded, and no half-built zip exists.
-      if (!zip || controller.signal.aborted) return;
-
-      // The zip is the only export blob that ever becomes a URL, and
-      // `downloadBlob` revokes it. Every file inside it went in as a `Blob`.
-      downloadBlob(zip, "sliced-audio.zip");
-    } finally {
-      setExportController(null);
-      setSliceProgress(null);
-      setProcessingLoading(false);
-      setDownloading(false);
-    }
-  };
 
   return (
     <Card>
@@ -277,7 +231,7 @@ const MasterToolbar = () => {
  *    says a view switch never loses work — so the row has to exist or the select
  *    would read blank and quietly change what they get.
  */
-function useOfferedFormats(
+export function useOfferedFormats(
   advanced: boolean,
   current: OutputFormat
 ): OutputFormat[] {

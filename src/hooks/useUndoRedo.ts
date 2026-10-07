@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useAudioStore } from "@/stores/audio-store";
+import { useWorkspace } from "@/stores/workspace";
 
 /**
  * Ctrl+Z and Cmd+Z undo. Ctrl+Shift+Z, Cmd+Shift+Z and Ctrl+Y redo.
@@ -55,7 +56,7 @@ export function useUndoRedo(): void {
 }
 
 /**
- * Brings a track's card into view.
+ * Brings a track's card into view, and in Advanced view opens it.
  *
  * The card carries `data-track-card`, which is the only thing this needs to
  * know about the DOM. A card that is not on screen — a view the user has
@@ -63,6 +64,10 @@ export function useUndoRedo(): void {
  */
 export function scrollToTrack(fileName: string | undefined): void {
   if (!fileName) return;
+
+  // Advanced view shows one track at a time, so first open the one undo
+  // changed. Simple view ignores which track is open.
+  useWorkspace.getState().setActiveTrack(fileName);
 
   const card = document.querySelector(
     `[data-track-card="${CSS.escape(fileName)}"]`

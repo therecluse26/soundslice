@@ -12,6 +12,7 @@ import {
 } from "@/lib/signal-chain";
 import { compressorHandles, drawCompressor } from "@/lib/curve-canvas";
 import { ToolSlider } from "./ToolControls";
+import { useNarrowPanel } from "./narrow-panel";
 
 type Compressor = Extract<Operation, { op: "compressor" }>;
 type Handle = "threshold" | "ratio";
@@ -53,6 +54,7 @@ export function CompressorEditor({
   onCommit: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const narrow = useNarrowPanel();
   const [active, setActive] = useState<Handle | null>(null);
   const dragging = useRef<Handle | null>(null);
 
@@ -136,10 +138,10 @@ export function CompressorEditor({
     onChange(clampCompressor({ ...operation, ...patch }));
 
   return (
-    <div className="flex flex-col gap-3 sm:flex-row">
+    <div className={`flex flex-col gap-3 ${narrow ? "" : "sm:flex-row"}`}>
       <canvas
         ref={canvas}
-        className="h-40 w-full shrink-0 cursor-pointer touch-none rounded border border-border bg-muted/20 sm:w-40"
+        className={`h-40 w-full shrink-0 cursor-pointer touch-none rounded border border-border bg-muted/20 ${narrow ? "" : "sm:w-40"}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}

@@ -3,6 +3,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { METER_FLOOR_DB, meterFraction } from "@/lib/meter";
 import { METER_COLORS, METER_ZONES } from "@/lib/meter-canvas";
+import { useNarrowPanel } from "./narrow-panel";
 
 /**
  * The small controls Advanced view's two strips share.
@@ -59,9 +60,11 @@ export function ToolSlider({
   /** Called when the pointer is let go. Ends a coalesced undo gesture. */
   onCommit?: () => void;
 }) {
+  const narrow = useNarrowPanel();
+
   return (
     <div className="flex items-center gap-3">
-      <Label className="w-28 shrink-0 text-xs">{label}</Label>
+      <Label className={`${narrow ? "w-20" : "w-28"} shrink-0 text-xs`}>{label}</Label>
       <Slider
         value={[value]}
         min={range.min}
@@ -71,7 +74,7 @@ export function ToolSlider({
         onValueCommit={onCommit}
         aria-label={label}
       />
-      <code className="w-20 shrink-0 text-right text-xs text-primary">
+      <code className={`${narrow ? "w-16" : "w-20"} shrink-0 text-right text-xs text-foreground`}>
         {display}
       </code>
     </div>
@@ -91,11 +94,14 @@ export function Popover({
   onClose,
   trigger,
   children,
+  align = "left",
 }: {
   open: boolean;
   onClose: () => void;
   trigger: React.ReactNode;
   children: React.ReactNode;
+  /** Which edge of the trigger the panel lines up with. */
+  align?: "left" | "right";
 }) {
   const anchor = useRef<HTMLDivElement | null>(null);
 
@@ -122,7 +128,7 @@ export function Popover({
     <div ref={anchor} className="relative">
       {trigger}
       {open && (
-        <div className="absolute left-0 top-8 z-50 rounded border border-border bg-background p-3 shadow-lg">
+        <div className={`absolute ${align === "right" ? "right-0" : "left-0"} top-8 z-50 rounded border border-border bg-background p-3 shadow-lg`}>
           {children}
         </div>
       )}

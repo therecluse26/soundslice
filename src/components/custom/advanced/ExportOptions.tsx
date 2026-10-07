@@ -3,11 +3,11 @@ import { useAudioStore } from "@/stores/audio-store";
 import { ExportOverrides, hasExportOverrides } from "@/lib/track-work";
 import { countRender } from "@/lib/render-count";
 import { BitDepthField, FormatField, SampleRateField } from "./ExportFields";
-import { JoinStrip } from "./JoinStrip";
 
 /**
- * A track card's **Export** section: what this track exports as, and how its
- * join is laid out. Advanced view only. Ticket 033.
+ * The inspector's **Export** tab: what this track exports as. Advanced view
+ * only. Ticket 033. The join order and its crossfades are in the region table,
+ * which becomes the join order while a join is on.
  *
  * ## Overrides, not a second copy of the master
  *
@@ -52,7 +52,7 @@ export function ExportOptions({ fileName }: { fileName: string }) {
   return (
     <div className="flex flex-col gap-4 py-2">
       <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col gap-2">
           <p className="text-xs text-muted-foreground">
             {ignored ? (
               <>
@@ -94,7 +94,7 @@ export function ExportOptions({ fileName }: { fileName: string }) {
         </div>
 
         <div
-          className={`grid grid-cols-1 gap-3 sm:grid-cols-3 ${ignored ? "opacity-60" : ""}`}
+          className={`grid grid-cols-1 gap-3 ${ignored ? "opacity-60" : ""}`}
         >
           <FormatField
             value={overrides?.exportFileType}
@@ -117,8 +117,6 @@ export function ExportOptions({ fileName }: { fileName: string }) {
           />
         </div>
       </div>
-
-      <JoinStrip fileName={fileName} />
     </div>
   );
 }
