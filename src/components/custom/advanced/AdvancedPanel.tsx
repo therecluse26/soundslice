@@ -57,14 +57,11 @@ export default function AdvancedPanel({
       <AccordionItem value="export" className="border-b-0">
         <AccordionTrigger>Export</AccordionTrigger>
         <AccordionContent>
-          <ExportOptions />
-          <p className="text-xs text-muted-foreground">
-            <b>Separate files or one joined file</b> is on the master toolbar,
-            under Output Format — it decides the shape of the whole export, so it
-            lives with the button that performs one. Reordering the joined
-            regions, and crossfades between them, are the join strip's own
-            ticket.
-          </p>
+          {/*
+            This track's own export choices, and its join strip. The master
+            choices — format, depth, rate and Join — are on the toolbar.
+          */}
+          <ExportOptions fileName={fileName} />
         </AccordionContent>
       </AccordionItem>
     </Accordion>

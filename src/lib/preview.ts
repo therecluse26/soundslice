@@ -40,6 +40,7 @@
 import { EditStack, Region, needsMeasurement } from "./edit-stack";
 import { linkStack, scheduleRegionEnvelope } from "./graph";
 import { sharedAudioContext } from "./audio-context";
+import { PITCH_PROCESSOR, hasSpectralWorklet } from "./worklet-registry";
 // `import type` for the frame shape, and the two functions from `dsp.ts`.
 // A value import from `meter.ts` would pull the meter ballistics, scale and
 // formatting into Simple view's bundle, which never draws a meter.
@@ -159,6 +160,16 @@ export type PreviewGraph = {
    */
   schedule: (region: Region, positionSec: number) => void;
 
+  /**
+   * Puts a pitch shift between the media element and everything else, or takes
+   * it out with 0. Time and pitch, ticket 037.
+   *
+   * The element's own playback rate does the speed. This is whatever pitch
+   * change is left after that. It needs the spectral worklet loaded first; a
+   * call before that is a no-op and the sound plays unshifted.
+   */
+  setPitch: (semitones: number) => void;
+
   /** Silences the chain. The source node stays — see "the one-way door". */
   dispose: () => void;
 };
@@ -258,7 +269,9 @@ export function attachPreview(element: HTMLMediaElement): PreviewGraph {
     tail = linkStack(
       context,
       inputTap,
-      plan.effects ? usablePlan(plan.stack, plan.measured) : EMPTY_PLAN
+      plan.effects
+        ? usablePlan(profileForStretch(plan.stack, plan.region), plan.measured)
+        : EMPTY_PLAN
     );
 
     tail.connect(outputTap);
@@ -293,6 +306,31 @@ export function attachPreview(element: HTMLMediaElement): PreviewGraph {
     );
   };
 
+  let pitch: AudioWorkletNode | null = null;
+  let pitchSemitones = 0;
+
+  const setPitch = (semitones: number) => {
+    const wanted = Math.abs(semitones) < 1e-6 ? 0 : semitones;
+    if (wanted === pitchSemitones && (wanted === 0 || pitch)) return;
+
+    source.disconnect();
+    pitch?.disconnect();
+    pitch = null;
+    pitchSemitones = 0;
+
+    if (wanted !== 0 && hasSpectralWorklet(context)) {
+      pitch = new AudioWorkletNode(context, PITCH_PROCESSOR, {
+        processorOptions: { semitones: wanted },
+      });
+      pitchSemitones = wanted;
+      source.connect(pitch);
+      pitch.connect(envelope);
+      return;
+    }
+
+    source.connect(envelope);
+  };
+
   const dispose = () => {
     envelope.disconnect();
     inputTap.disconnect();
@@ -301,7 +339,7 @@ export function attachPreview(element: HTMLMediaElement): PreviewGraph {
     tail = null;
   };
 
-  const graph = { update, schedule, readMeters, dispose };
+  const graph = { update, schedule, readMeters, setPitch, dispose };
   (element as Routed)[ATTACHED] = graph;
 
   // Development builds only — `import.meta.env.DEV` is a compile-time constant,
@@ -338,6 +376,37 @@ export async function resumePreview(): Promise<void> {
 function fill(frame: MeterFrame, window: Float32Array): void {
   frame.rms = rmsOf(window);
   frame.peak = peakOf(window);
+}
+
+/**
+ * The stack with its noise profile moved to where a stretched region's noise
+ * now sits.
+ *
+ * Export denoises **before** time and pitch, on the raw recording. Preview
+ * cannot: the media element's playback rate and the pitch worklet both act
+ * before the stack, so the denoiser hears noise that has already moved. Speed
+ * and the remaining pitch shift together move every frequency by
+ * `2^(semitones/12)` — so reading the profile as though it had been measured
+ * at a rate that much higher puts each bin of it back on top of the noise.
+ * Measured: a 1.5× speed, +3 semitone region went from 3.4 dB of reduction to
+ * close to the export's.
+ */
+export function profileForStretch(stack: EditStack, region: Region): EditStack {
+  const semitones = region.stretch?.semitones ?? 0;
+  if (semitones === 0) return stack;
+
+  const scale = Math.pow(2, semitones / 12);
+  return stack.map((operation) =>
+    operation.op === "noiseReduction"
+      ? {
+          ...operation,
+          profile: {
+            ...operation.profile,
+            sampleRate: operation.profile.sampleRate * scale,
+          },
+        }
+      : operation
+  );
 }
 
 const EMPTY_PLAN = { stack: [] as EditStack, measured: new Map<number, number>() };

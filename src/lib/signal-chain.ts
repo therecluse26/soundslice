@@ -31,7 +31,8 @@ import {
   Operation,
   OperationName,
   PEAK_NORMALIZATION_DEFAULTS,
-  sortToCanonical,
+  canonicalRank,
+  insertCanonically,
 } from "./edit-stack";
 
 /** One block of the chain, as the panel needs to know it. */
@@ -65,8 +66,15 @@ export const BLOCKS: BlockInfo[] = [
     op: "noiseReduction",
     short: "Noise",
     label: "Noise reduction",
-    what: "Subtracts a measured noise profile from the whole track.",
-    built: false,
+    what: "Subtracts the noise measured from a region that holds only noise. Always first.",
+    built: true,
+  },
+  {
+    op: "peakNormalization",
+    short: "Peak",
+    label: "Peak normalization",
+    what: "Levels the input: scales the track so its loudest sample reaches a target.",
+    built: true,
   },
   {
     op: "eq",
@@ -94,13 +102,6 @@ export const BLOCKS: BlockInfo[] = [
     short: "Loud",
     label: "Loudness",
     what: "Brings the track to a loudness target in LUFS.",
-    built: true,
-  },
-  {
-    op: "peakNormalization",
-    short: "Peak",
-    label: "Peak normalization",
-    what: "Scales the track so its loudest sample reaches a target.",
     built: true,
   },
   {
@@ -199,14 +200,19 @@ export function defaultOperation(op: OperationName): Operation {
 }
 
 /**
- * The stack with this operation switched on, in canonical order.
+ * The stack with this operation switched on, where the canonical order puts it.
  *
  * A stack that already holds it is returned unchanged, so switching a block on
- * twice cannot make two of it.
+ * twice cannot make two of it. Every other operation keeps the place the user
+ * gave it — see `insertCanonically`.
  */
-export function withOperation(stack: EditStack, op: OperationName): EditStack {
+export function withOperation(
+  stack: EditStack,
+  op: OperationName,
+  operation: Operation = defaultOperation(op)
+): EditStack {
   if (operationIn(stack, op)) return stack;
-  return sortToCanonical([...stack, defaultOperation(op)]);
+  return insertCanonically(stack, operation);
 }
 
 /** The stack with every operation of this name taken out. */
@@ -223,11 +229,114 @@ export function withoutOperation(stack: EditStack, op: OperationName): EditStack
  */
 export function replaceOperation(stack: EditStack, next: Operation): EditStack {
   const index = stack.findIndex((one) => one.op === next.op);
-  if (index === -1) return sortToCanonical([...stack, next]);
+  if (index === -1) return insertCanonically(stack, next);
 
   const copy = [...stack];
   copy[index] = next;
   return copy;
+}
+
+/* ---------------------------------------------------------------- the order */
+
+/**
+ * The order the chain draws its seven tiles in.
+ *
+ * **A tile that is on sits where the stack puts it**, because the picture must
+ * match the sound. A tile that is off has no place in the stack, so it is drawn
+ * straight after the last tile that canonically comes before it. On an
+ * untouched chain that is the canonical order, tile for tile.
+ *
+ * The rule for an off tile matches `insertCanonically`, so switching a block on
+ * leaves its tile where it was drawn. A tile that jumped when switched on would
+ * look like the switch had moved it.
+ */
+export function chainOrder(stack: EditStack): OperationName[] {
+  const order: OperationName[] = [];
+  for (const operation of stack) {
+    if (!order.includes(operation.op)) order.push(operation.op);
+  }
+
+  for (const block of BLOCKS) {
+    if (order.includes(block.op)) continue;
+
+    const rank = canonicalRank(block.op);
+    let at = 0;
+    order.forEach((placed, index) => {
+      if (canonicalRank(placed) < rank) at = index + 1;
+    });
+
+    order.splice(at, 0, block.op);
+  }
+
+  return order;
+}
+
+/**
+ * The stack with one operation moved beside another, as a drag drops it.
+ *
+ * `target` may be a tile that is off. The move is made on the drawn order and
+ * the stack is read back out of it, so dropping a block next to an off tile puts
+ * it exactly where the user saw it land.
+ *
+ * Returns the stack unchanged when the operation is not on, or when it is
+ * dropped on itself.
+ */
+export function moveInChain(
+  stack: EditStack,
+  op: OperationName,
+  target: OperationName,
+  side: "before" | "after"
+): EditStack {
+  if (op === target || !operationIn(stack, op)) return stack;
+
+  // Noise reduction is pinned to the input. See `withNoiseFirst`.
+  if (op === "noiseReduction") return stack;
+
+  const order = chainOrder(stack).filter((name) => name !== op);
+  const at = Math.max(
+    order[0] === "noiseReduction" ? 1 : 0,
+    order.indexOf(target) + (side === "after" ? 1 : 0)
+  );
+  order.splice(at, 0, op);
+
+  return reorderedTo(stack, order);
+}
+
+/**
+ * The stack with one operation moved one place earlier or later.
+ *
+ * The keyboard's way to reorder, and the way the open block offers. It swaps
+ * with the next operation that is **on** — skipping over off tiles, which hold
+ * no place in the sound.
+ */
+export function shiftOperation(
+  stack: EditStack,
+  op: OperationName,
+  delta: -1 | 1
+): EditStack {
+  const index = stack.findIndex((one) => one.op === op);
+  const swap = index + delta;
+  if (index === -1 || swap < 0 || swap >= stack.length) return stack;
+
+  // Nothing moves in front of noise reduction, and it moves nowhere.
+  if (op === "noiseReduction" || stack[swap].op === "noiseReduction") {
+    return stack;
+  }
+
+  const copy = [...stack];
+  [copy[index], copy[swap]] = [copy[swap], copy[index]];
+  return copy;
+}
+
+/** The stack's operations, in the order the names give. Off names are skipped. */
+function reorderedTo(stack: EditStack, order: OperationName[]): EditStack {
+  const next: EditStack = [];
+  for (const name of order) {
+    for (const operation of stack) {
+      if (operation.op === name) next.push(operation);
+    }
+  }
+  return next;
 }
 
 /** The one line under a block's name on its tile. */

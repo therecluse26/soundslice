@@ -94,7 +94,7 @@ describe("isAdvancedExportChoice", () => {
     exportFileType: OutputFormat.WAV,
     bitDepth: 16,
     outputSampleRate: null,
-    joinRegions: false,
+    joinMode: "separate" as const,
   };
 
   it("says no to what Simple view can already describe", () => {
@@ -121,7 +121,7 @@ describe("isAdvancedExportChoice", () => {
   });
 
   it("says yes to joined output, which Simple view has no control for", () => {
-    expect(isAdvancedExportChoice({ ...simple, joinRegions: true })).toBe(true);
+    expect(isAdvancedExportChoice({ ...simple, joinMode: "track" })).toBe(true);
   });
 
   it("still counts as one sentence when several are true at once", () => {
@@ -132,7 +132,7 @@ describe("isAdvancedExportChoice", () => {
         exportFileType: OutputFormat.FLAC,
         bitDepth: 24,
         outputSampleRate: 96000,
-        joinRegions: true,
+        joinMode: "all",
       })
     ).toBe(true);
   });

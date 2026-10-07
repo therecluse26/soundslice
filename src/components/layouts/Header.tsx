@@ -1,5 +1,6 @@
 import { Logo } from "../logo";
 import { ViewToggle } from "../custom/ViewToggle";
+import { UndoRedoButtons } from "../custom/UndoRedoButtons";
 
 export function Header() {
   return (
@@ -18,6 +19,7 @@ export function Header() {
           ticket 012.
         */}
         <div className="absolute right-4 md:right-8 flex items-center gap-2">
+          <UndoRedoButtons />
           <ViewToggle />
         </div>
       </div>

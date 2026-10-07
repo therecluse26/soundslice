@@ -1,9 +1,8 @@
 import BrowserMultiFileUpload from "@/components/custom/BrowserMultiFileUpload";
 import { AudioEditor } from "@/components/custom/AudioEditor";
-import { useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import { EditorTrack, useAudioStore } from "@/stores/audio-store";
+import { useAudioStore } from "@/stores/audio-store";
 import MasterToolbar from "@/components/custom/MasterToolbar";
 import SineWaveLoader from "@/components/custom/SineWaveLoader";
 import { AdvancedSettingsChip } from "@/components/custom/AdvancedSettingsChip";
@@ -11,6 +10,8 @@ import { RefusedFilesNotice } from "@/components/custom/RefusedFilesNotice";
 import { SliceProgressLabel } from "@/components/custom/SliceProgressLabel";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { countRender } from "@/lib/render-count";
+import { Button } from "@/components/ui/button";
+import { useEffect } from "react";
 
 export default function Dashboard() {
   if (import.meta.env.DEV) countRender("Dashboard");
@@ -18,6 +19,20 @@ export default function Dashboard() {
   // Once for the whole page. One history serves the whole project, so one
   // listener serves it — a listener per card would undo once per card.
   useUndoRedo();
+
+  // Saved projects. Started once, for the life of the page, from its own chunk
+  // so Simple view's first paint does not wait for it. Ticket 038.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let live = true;
+    void import("@/lib/project-autosave").then(({ startAutosave }) => {
+      if (live) stop = startAutosave();
+    });
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
 
   /**
    * Subscribes to the **files**, not the tracks.
@@ -30,23 +45,17 @@ export default function Dashboard() {
     useShallow((state) => state.tracks.map((track) => track.file))
   );
   const isLoading = useAudioStore((state) => state.processingLoading);
-  const setTracks = useAudioStore((state) => state.setTracks);
-
-  const updateTrackCallback = useCallback(
-    (tracks: EditorTrack[]) => {
-      // No forced redraw. `setTracks` writes real state, so Zustand notifies
-      // whoever is subscribed and nobody else.
-      setTracks(tracks);
-    },
-    [setTracks]
-  );
+  const cancelExport = useAudioStore((state) => state.cancelExport);
+  // A store action is a stable reference, so the uploader never sees a new
+  // callback and never re-runs anything because of one.
+  const addFiles = useAudioStore((state) => state.addFiles);
 
   return (
     <>
       <div className="flex-grow flex flex-col">
         <div className="container px-4 md:px-8 flex-grow flex flex-col">
           <div>
-            <BrowserMultiFileUpload onUploadComplete={updateTrackCallback} />
+            <BrowserMultiFileUpload onFilesReady={addFiles} />
             <RefusedFilesNotice />
             {files.length > 0 && (
               <div>
@@ -102,8 +111,17 @@ export default function Dashboard() {
             message as a prop, so feeding it a string that changes many times a
             second would restart the animation on every tick.
           */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-1/3">
-            <SliceProgressLabel />
+          <div className="absolute inset-x-0 bottom-1/3 flex flex-col items-center gap-4">
+            <div className="pointer-events-none">
+              <SliceProgressLabel />
+            </div>
+            {/*
+              The one way out of a long export. It stops at the next render
+              pass or encode chunk, and nothing downloads. Ticket 035.
+            */}
+            <Button variant="outline" onClick={cancelExport}>
+              Cancel
+            </Button>
           </div>
         </div>
       )}

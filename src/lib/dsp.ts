@@ -214,6 +214,15 @@ export type JoinedSpan = {
   atSec: number;
   /** How many frames it occupies. **0** for a region with nothing left in it. */
   frameCount: number;
+  /**
+   * The crossfade **into** this region from the one before it, in seconds, as
+   * the timeline could fit it. 0 for a butt join and for the first region.
+   *
+   * Exact, because it is a whole number of frames divided by the rate.
+   */
+  crossfadeInSec: number;
+  /** The crossfade **out of** this region into the next one. 0 for none. */
+  crossfadeOutSec: number;
 };
 
 export type JoinedTimeline = {
@@ -256,12 +265,18 @@ export type JoinedTimeline = {
 export function joinedTimeline(
   regions: readonly { start: number; end: number }[],
   sourceDurationSec: number,
-  sampleRate: number
+  sampleRate: number,
+  /**
+   * The crossfade into each region from the one before it, in milliseconds, by
+   * index. Entry 0 is ignored — nothing comes before the first region. Absent,
+   * or all zero, is a butt join and **exactly** the timeline ticket 028 built.
+   */
+  crossfadesMs: readonly number[] = []
 ): JoinedTimeline {
   const spans: JoinedSpan[] = [];
-  let atFrame = 0;
+  let endFrame = 0;
 
-  for (const region of regions) {
+  regions.forEach((region, index) => {
     // The clamp lives here and nowhere else. It used to exist twice, in
     // `buildGraph` and again in `renderPass`, which is two chances to disagree
     // about what a region past the end of the file means.
@@ -270,16 +285,79 @@ export function joinedTimeline(
 
     const frameCount = Math.max(0, Math.round((end - start) * sampleRate));
 
+    // **A crossfade pulls this region back over the end of the last one.** It
+    // is a whole number of frames, so offsets still accumulate in integers and
+    // cannot drift. It is capped at half of each neighbour, so a region can
+    // never be crossfaded over from both sides at once and vanish.
+    const previous = spans[index - 1];
+    const wanted = index > 0 ? Math.max(0, crossfadesMs[index] ?? 0) : 0;
+    const overlap = previous
+      ? Math.min(
+          Math.round((wanted / 1000) * sampleRate),
+          Math.floor(previous.frameCount / 2),
+          Math.floor(frameCount / 2)
+        )
+      : 0;
+
+    if (previous) previous.crossfadeOutSec = overlap / sampleRate;
+
+    const atFrame = endFrame - overlap;
+
     spans.push({
       sourceStartSec: start,
       durationSec: end - start,
       atFrame,
       atSec: atFrame / sampleRate,
       frameCount,
+      crossfadeInSec: overlap / sampleRate,
+      crossfadeOutSec: 0,
     });
 
-    atFrame += frameCount;
+    endFrame = atFrame + frameCount;
+  });
+
+  return { spans, frameCount: Math.max(1, endFrame) };
+}
+
+/**
+ * An equal-power fade, as the points of a curve. `in` rises from 0 to 1;
+ * `out` falls from 1 to 0.
+ *
+ * ## Why equal power, and not the linear ramp a fade edge uses
+ *
+ * Ticket 028 measured the problem before it existed: two regions overlapped
+ * with **linear** ramps sum to an equal-*gain* crossfade. For two different
+ * sounds — two phrases, two hits, which is what a join holds — the powers add,
+ * not the amplitudes, and the middle of a linear crossfade dips by **3 dB**.
+ * Equal power (`sin` up, `cos` down) holds the sum of the powers at exactly 1
+ * all the way across, so the seam neither dips nor bumps.
+ *
+ * The cost is the other case. Two copies of the *same* material — a region
+ * joined to a near-duplicate of itself — add as amplitudes, and equal power
+ * bumps by up to 3 dB in the middle. A join is for different pieces of a
+ * recording, so the common case wins. Ticket 034 records the decision.
+ *
+ * A region's own fade edges stay **linear**. Changing them would change every
+ * exported file since ticket 008, and a fade to silence has no partner to sum
+ * with, so equal power would buy nothing there.
+ */
+export function equalPowerCurve(
+  direction: "in" | "out",
+  points = 64
+): Float32Array {
+  const curve = new Float32Array(Math.max(2, points));
+  const last = curve.length - 1;
+
+  for (let index = 0; index <= last; index++) {
+    const t = index / last;
+    curve[index] =
+      direction === "in" ? Math.sin((t * Math.PI) / 2) : Math.cos((t * Math.PI) / 2);
   }
 
-  return { spans, frameCount: Math.max(1, atFrame) };
+  // Exact ends, so a crossfade starts at true silence and lands at full level.
+  // `cos(π/2)` is 6e-17, which is not silence to a 24-bit file.
+  curve[0] = direction === "in" ? 0 : 1;
+  curve[last] = direction === "in" ? 1 : 0;
+
+  return curve;
 }

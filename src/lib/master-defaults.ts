@@ -54,7 +54,17 @@ export type MasterDefaults = {
   outputSampleRate: number | null;
 
   /**
-   * **Join** — one file per track instead of one per region. Advanced only.
+   * **Join** — how many files an export writes. Advanced only.
+   *
+   * | Mode | Files |
+   * |---|---|
+   * | `separate` | one per region — what every export did before ticket 028 |
+   * | `track` | one per track, its regions laid end to end |
+   * | `all` | **one for the whole export**, every track's join laid end to end |
+   *
+   * It was a boolean, `joinRegions`, until ticket 034 added joining across
+   * tracks. Three answers to one question are one field, not two booleans that
+   * can disagree.
    *
    * A master default and not a per-track setting, for the same reason the
    * output format is one: it decides the *shape* of a whole export, and a batch
@@ -62,19 +72,28 @@ export type MasterDefaults = {
    * nobody asked for.
    *
    * Simple view has no control for it, and honours it if Advanced view set it —
-   * exactly as it honours FLAC, 24-bit and a chosen sample rate. It costs
-   * nothing there: Simple exports one region per track, and one region joined is
-   * the same file, with the same name. The Advanced settings chip says it is on.
+   * exactly as it honours FLAC, 24-bit and a chosen sample rate. The Advanced
+   * settings chip says it is on.
    */
-  joinRegions: boolean;
+  joinMode: JoinMode;
 };
+
+/** How many files an export writes. See `MasterDefaults.joinMode`. */
+export type JoinMode = "separate" | "track" | "all";
+
+export const JOIN_MODES: JoinMode[] = ["separate", "track", "all"];
+
+/** True when an export lays regions end to end, in either join mode. */
+export function joins(mode: JoinMode | undefined): boolean {
+  return mode === "track" || mode === "all";
+}
 
 export const MASTER_DEFAULTS_STORAGE_KEY = "master-defaults";
 
 /**
  * Version 2 dropped `trimSilence`. Version 3 added `loudnessTargetLufs`.
  * Version 4 added `bitDepth` and `outputSampleRate`. Version 5 added
- * `joinRegions`.
+ * `joinRegions`. Version 6 replaced it with `joinMode`.
  *
  * `trimSilence` read an `AnalyserNode` before the offline render ran, so it read
  * zeros and could never work. Its control has been commented out since before
@@ -84,7 +103,7 @@ export const MASTER_DEFAULTS_STORAGE_KEY = "master-defaults";
  * `persisted.ts` states. The cost is that a user who set their switches before
  * this build gets them back at their defaults, once.
  */
-export const MASTER_DEFAULTS_STORAGE_VERSION = 5;
+export const MASTER_DEFAULTS_STORAGE_VERSION = 6;
 
 export const DEFAULT_MASTER_DEFAULTS: MasterDefaults = {
   normalizeAudio: false,
@@ -93,7 +112,7 @@ export const DEFAULT_MASTER_DEFAULTS: MasterDefaults = {
   exportFileType: OutputFormat.WAV,
   bitDepth: DEFAULT_BIT_DEPTH,
   outputSampleRate: null,
-  joinRegions: false,
+  joinMode: "separate",
 };
 
 /**
@@ -115,10 +134,7 @@ export function isMasterDefaults(value: unknown): value is MasterDefaults {
     isOutputFormat(candidate.exportFileType) &&
     isBitDepth(candidate.bitDepth) &&
     isOutputSampleRate(candidate.outputSampleRate) &&
-    // A plain `typeof`, with no private guard beside it. The guards above exist
-    // because those values have a legal *set* as well as a legal type; a boolean
-    // has only the two.
-    typeof candidate.joinRegions === "boolean"
+    JOIN_MODES.some((mode) => mode === candidate.joinMode)
   );
 }
 

@@ -378,6 +378,7 @@ async function measureBatch(): Promise<Measurement> {
 
   return measure("batch zip", async () => {
     const zip = await AudioService.sliceAllFilesIntoZip(tracks, SWITCHES_OFF);
+    if (!zip) throw new Error("The batch export was cancelled, and nothing cancelled it.");
     void zip.size;
   });
 }

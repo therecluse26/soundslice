@@ -1,9 +1,7 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
 import { UploadIcon, FileIcon } from "@radix-ui/react-icons";
-import { EditorTrack } from "@/stores/audio-store";
-import { areUploadsComplete } from "@/lib/uploads";
 
 interface FileUpload {
   file: File;
@@ -13,33 +11,23 @@ interface FileUpload {
 }
 
 interface BrowserMultiFileUploadProps {
-  onUploadComplete?: (tracks: EditorTrack[]) => void;
+  /**
+   * The files of **one** drop or pick, once every one of them has read.
+   *
+   * Only that batch — never the files of earlier drops. It used to hand over
+   * its whole upload history every time, and the store merged it. That is why
+   * a removed track could not stay removed: the next drop sent it back. Ticket
+   * 030 made the store own the track list and this component report batches.
+   */
+  onFilesReady?: (files: File[]) => void;
 }
 
 export default function BrowserMultiFileUpload({
-  onUploadComplete,
+  onFilesReady,
 }: BrowserMultiFileUploadProps) {
   const [uploads, setUploads] = useState<FileUpload[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const uploadCompleteRef = useRef(false);
-  const [isUploadComplete, setIsUploadComplete] = useState(false);
   const [dragDropError, setDragDropError] = useState<string | null>(null);
-
-  // `areUploadsComplete` is not `uploads.every(…)`. An empty list must report
-  // nothing at all, or a fresh mount tells the store there are zero tracks.
-  // See `.wayfinder/tickets/016-export-empties-track-list.md`.
-  useEffect(() => {
-    if (onUploadComplete && !isUploadComplete && areUploadsComplete(uploads)) {
-      setIsUploadComplete(true);
-      onUploadComplete(
-        uploads.map((upload) => {
-          return {
-            file: upload.file,
-          } as EditorTrack;
-        })
-      );
-    }
-  }, [uploads, onUploadComplete, isUploadComplete]);
 
   const uploadFile = useCallback((file: File) => {
     setDragDropError(null); // Reset error state
@@ -100,7 +88,6 @@ export default function BrowserMultiFileUpload({
 
   const handleFiles = useCallback(
     async (files: File[]) => {
-      setIsUploadComplete(false);
       if (files.length === 0) {
         console.error("No files received");
         return;
@@ -113,9 +100,12 @@ export default function BrowserMultiFileUpload({
       }));
       setUploads((prev) => [...prev, ...newUploads]);
 
+      const read: File[] = [];
+
       for (const upload of newUploads) {
         try {
           await uploadFile(upload.file);
+          read.push(upload.file);
         } catch (error) {
           console.error(`Error uploading file ${upload.file.name}:`, error);
           setUploads((prev) =>
@@ -132,8 +122,18 @@ export default function BrowserMultiFileUpload({
           );
         }
       }
+
+      // The finished rows have nothing left to show. A row that failed stays,
+      // so its error stays on screen.
+      setUploads((prev) =>
+        prev.filter((upload) => !read.includes(upload.file))
+      );
+
+      // An empty batch reports nothing. A report of zero files must never
+      // reach the store — ticket 016's defect began exactly that way.
+      if (read.length > 0) onFilesReady?.(read);
     },
-    [uploadFile]
+    [uploadFile, onFilesReady]
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {

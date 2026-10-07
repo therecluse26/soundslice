@@ -78,29 +78,22 @@ default. `prototype` for UI tickets. `research` for external API tickets.
 
 > **Never run `npm` or `npx` in this repo. Use `pnpm exec`.**
 >
-> The repo carries **two** lockfiles and they disagree: `pnpm-lock.yaml`
-> pins `wavesurfer.js` at **7.8.9**, and the tracked `package-lock.json`
-> pins **7.8.6**. Any npm command replaces pnpm's symlink at
-> `node_modules/wavesurfer.js` with a real 7.8.6 folder.
->
-> **`npx --no-install` does not save you.** It still loads npm's tree and
-> reconciles it against `package-lock.json`, rewriting
-> `node_modules/.package-lock.json` and the package with it. Measured:
-> `pnpm exec tsc --noEmit` left both untouched; `npx --no-install tsc
-> --noEmit` broke the link.
->
-> It then fails as a compile error **in our own code**:
+> The repo carried **two** lockfiles and they disagreed: `pnpm-lock.yaml`
+> pins `wavesurfer.js` at **7.8.9**, and `package-lock.json` pinned **7.8.6**.
+> Any npm command replaced pnpm's symlink at `node_modules/wavesurfer.js`
+> with a real 7.8.6 folder — even `npx --no-install`, which still reconciles
+> npm's tree. It then failed as a compile error **in our own code**:
 > `AudioEditor.tsx … 'exponentialZooming' does not exist in type
-> 'ZoomPluginOptions'`. That option is real in 7.8.9 and absent in 7.8.6.
-> `pnpm install --frozen-lockfile` reports "Already up to date" and does
-> **not** repair it — the store still holds 7.8.9; only the link is wrong.
+> 'ZoomPluginOptions'`.
 >
-> Repair: `rm -rf node_modules/wavesurfer.js && ln -s
+> **`package-lock.json` is deleted** (2026-10-06), and `package.json` names
+> `"packageManager": "pnpm@11.4.0"`. npm no longer has a lockfile to obey, but
+> it still does not read `pnpm-lock.yaml`, so an npm install resolves its own
+> versions. The rule stands.
+>
+> Repair, if it happens: `rm -rf node_modules/wavesurfer.js && ln -s
 > .pnpm/wavesurfer.js@7.8.9/node_modules/wavesurfer.js
 > node_modules/wavesurfer.js`.
->
-> The real fix is deleting `package-lock.json`, which is tracked, so it
-> needs the repo owner's word.
 
 ### The Advanced view vision
 
@@ -117,8 +110,9 @@ Each track keeps its own card and its own waveform. Tracks never play together.
 The master toolbar holds defaults; any track may override any of them.
 
 "Arrange" is an **output choice**, not a workspace. The master toolbar offers
-`separate files | one joined file`. Choosing joined reveals a strip of region
-chips that can be reordered, with draggable crossfades between them.
+`Separate files | One file per track | One file for everything`. Choosing a join
+reveals a strip of region chips that can be reordered, with a crossfade at each
+seam. Built by ticket 034.
 
 ## Decisions so far
 
@@ -545,78 +539,88 @@ chips that can be reordered, with draggable crossfades between them.
   first for anything that survives a reload. Simple bundle 120.35 →
   **120.74 KiB gzip**.
 
+- [029 — Chain order, and the input slot](./tickets/029-chain-order-and-the-input-slot.md)
+  — **built. The signal chain's blocks move, and "Reset order" always has a
+  correct answer.** None of the fog's three fixes: peak normalization moves to
+  the **input slot**, straight after noise reduction, because in Simple view's
+  stack it *is* input gain staging. Canonical order is now `noiseReduction →
+  peakNormalization → eq → compressor → gain → loudness → limiter`, and all four
+  of Simple view's stacks are canonical, under test. Drag a block, or use the
+  open block's earlier and later buttons. **Noise reduction is pinned first** and
+  nothing moves in front of it.
+- [030 — Undo covers files and the master toolbar](./tickets/030-undo-covers-files-and-master.md)
+  — **built.** Adding files, removing a track (the new ✕) and every master
+  default are now gestures. Undo brings a removed track back with all its work.
+  **Undo and Redo buttons in the header**, labelled with what they reverse.
+  **Found on the way, older than this map's work:** crossing the 800 px
+  breakpoint rebuilt every waveform, the regions plugin clamped each region to
+  0–0 on the empty waveform, and the card wrote that back — turning a phone
+  sideways erased the user's regions. `useWavesurferInstance` now restyles in
+  place, and a clamp is never written back while the duration is 0.
+- [031 — Copy to all tracks, and Clear Advanced settings](./tickets/031-copy-to-all-and-clear.md)
+  — **built.** Copy writes the **effective** stack into every track **except
+  noise reduction**, whose profile belongs to one recording; export overrides
+  copy too. Clear removes everything the chip counts — stacks, overrides, join
+  layouts, extra regions, stretches — as **one** gesture, and one Ctrl+Z puts
+  all of it back.
+- [032 — Split at transients, and where region tool settings live](./tickets/032-split-at-transients-and-tool-prefs.md)
+  — **built.** Ticket 026's detector, one region per hit, starting 10 ms before
+  it, running to the next, so a join plays the file back. `hits.wav` gave **11**.
+  Region tool settings are **a preference of their own** (`region-tools`), not
+  master defaults and not project work: how you work, not what the file is.
+- [033 — Per-track export overrides](./tickets/033-per-track-export-overrides.md)
+  — **built.** Format, bit depth and sample rate, each "Master (…)" until changed.
+  A missing field is inherited and `{}` means none. A zip may hold mixed formats;
+  **One file for everything** uses the master format and says so.
+- [034 — The join strip, crossfades, and joining across tracks](./tickets/034-join-strip-crossfades-and-join-everything.md)
+  — **built. Three join modes:** separate files, one file per track, one file for
+  everything. **Crossfades are equal power**; region fades stay linear. A
+  crossfade lives on the region after its seam and is capped at half of each
+  neighbour. **A zero crossfade is byte-identical to a butt join**, and ten 50 ms
+  crossfades shortened an 11-region join by exactly 10 × 2400 frames. Across
+  tracks, each renders with its own stack and the results are laid end to end at
+  the first track's rate. Storage version 5 → 6.
+- [035 — Cancel a running export](./tickets/035-cancel-a-running-export.md)
+  — **built.** An `AbortController` through every pass, item and worker job. A
+  cancelled export returns `null` and **nothing downloads** — a half-built zip is
+  thrown away. A two-track zip stopped in **37 ms**.
+- [036 — Noise reduction](./tickets/036-noise-reduction.md)
+  — **built. Spectral subtraction against a profile learned from a region of
+  noise.** One self-contained `spectralKit()` runs in the encode worker for export
+  and, from its own `toString()`, in an `AudioWorklet` for preview — never a node
+  in an `OfflineAudioContext`, which leaks. Export runs it in a **prepare stage**
+  before the graph. The real latency is the whole 2048-sample window, and export
+  is aligned to it. Measured: **19.2 dB** of noise removed at amount 0.8.
+  **Found and fixed in the browser:** a stretched region previewed only 3.4 dB
+  down, because preview's speed change moves the noise before the denoiser hears
+  it; the profile is now read at the shifted rate, and preview measures 19.1 dB.
+- [037 — Time and pitch](./tickets/037-time-and-pitch.md)
+  — **built, on the region.** Speed 0.5–2×, pitch ±12 semitones. Export
+  resamples and pitch-shifts in the prepare stage; preview uses the media
+  element's `playbackRate` and the same pitch shifter as a worklet, about 43 ms
+  late. 2× gave exactly half the frames; +12 st gave exactly the same length.
+- [038 — Saved projects](./tickets/038-saved-projects.md)
+  — **built. The work is saved, never the audio.** localStorage, keyed by
+  `name:size`, saved automatically only when the work differs from the track's
+  **baseline**, evicted least-recently-used at 100 entries or 2 000 000
+  characters. A record it cannot read is discarded, not half-applied. Dropping
+  the file again restores it, with **Start fresh**. Save and Open as
+  `*.soundslice.json`. **Across tickets 029–038:** tests 446 → **522**; Simple
+  bundle 120.74 → **124.86 KiB gzip**. The 4.12 KiB is code Simple view really
+  reaches — the store's file and master undo, cancel, join modes, the slice plan,
+  crossfades and the Undo and Redo buttons. Everything Advanced-only is lazy, and
+  the new Advanced icons are inline SVG because `@radix-ui/react-icons` is one
+  module and any icon used in a lazy chunk lands in the main bundle. **And
+  `shine.js` stays:** measured in Chromium on 5 minutes of stereo at 320 kbps,
+  shine took **3.2 s** and `@mediabunny/mp3-encoder` (LAME) **4.7 s**. Shine's
+  native benchmarks did not lie for the browser either. The package was removed
+  again.
+
 ## Not yet specified
 
-- Advanced panel layout for the **Export** section. It is still a form. The
-  Sound section is settled and built as a signal chain (ticket 027), and the
-  Regions section left the panel entirely — the tools are a strip above the
-  waveform and a region's own controls are drawn on the region (tickets 022,
-  025).
-- **Reordering the signal chain.** Ticket 027 draws the blocks in canonical
-  order and they cannot be dragged. The hole below has to be filled first: the
-  canonical order cannot express Simple view's own stack, so "reset order" has
-  nothing correct to reset to.
-- **What else undo covers.** The command history built in ticket 024 records
-  region gestures and nothing else. Adding a file, removing a track and changing a
-  master default are not undoable, and "Clear Advanced settings" — the gesture the
-  design used to argue for one history rather than one per track — does not exist
-  yet. Each needs a snapshot shape of its own, and the track list's would hold
-  `File` objects, which would be the first history entry to count against ticket
-  007's 1 GB ceiling.
-- **Where the region tools' own settings live.** `snapToTransients` and the three
-  split-on-silence numbers survive a view switch and not a reload, because
-  `MasterDefaults` holds what an export is made of and these change no exported
-  file. Whether a working mode should persist at all is a decision nobody has
-  made, and it belongs with saved projects rather than beside it.
-- Decide-then-build chains for each of the fourteen features
-- **The join strip.** Ticket 028 built the single-file export path, so what is
-  left is the reorder UI and the crossfade maths: a stored order that is not
-  start time, undo for moving a chip, and a crossfade shape. Note that
-  `scheduleRegionEnvelope` ramps **linearly**, so overlapping two regions
-  gives an equal-gain crossfade — correlated material bumps and uncorrelated
-  material dips about 3 dB in the middle. Constant power is a decision, not a
-  detail.
-- **Joining across tracks.** This map's own vision says "regions from any
-  track", and ticket 028 built one file per **track**. Cross-track needs an
-  order nobody has decided, and a rule for two tracks at different sample
-  rates or channel counts.
-- Saved projects — OPFS schema, what is stored, when it is evicted
-- "Copy settings to all tracks" — which operations copy, and which do not. Now
-  sharp enough to answer, because ticket 002 has named the operation set. It
-  belongs inside that feature's own decide-then-build chain, which does not exist
-  yet. Ticket 003 settled the mechanism: copying writes the current effective
-  settings into every track, turning inherited values into overrides, reversible
-  with Reset all.
-- Removing one track. There is no control for it today, so "tracks on screen"
-  means "every track ever loaded", and ticket 007's 1 GB ceiling counts them all.
-  Three tickets have now wanted it — 015 could not test removal, 016 lost the
-  export as its unmount path, and 017 had to reach for `setTracks` to force a
-  remount. It belongs to a feature chain that does not exist yet.
-- **Split at transients** — one region per transient. Grilling on 2026-08-20 kept
-  it apart from ticket 026: "snap to transients" is a **magnet on a drag**, and
-  this is a **detect-then-cut** tool, the same shape as ticket 025. It is a good
-  feature and it was deliberately left out of the Regions stretch. It needs its
-  own onset-detection decision, which ticket 026 will have made first.
-- A level-setting slot before the compressor in the canonical order. Ticket 008
-  found the hole: Simple view's "both switches on" stack normalizes, compresses,
-  then normalizes again, and the canonical order cannot express that. Whether the
-  fix is a second `gain` position, a free-floating `peakNormalization`, or a
-  named "input gain" operation is a design decision, and it only matters once
-  Advanced view can reorder a stack a user can see.
-- Cancelling a running export. The engine takes it — `renderRegion` accepts
-  `isCancelled` and an in-flight 5-minute MP3 encode abandons in 76.5 ms — and
-  there is no button. Where it lives, and what it does to a half-built zip,
-  belongs with whichever ticket adds the control.
-- Replacing `shine.js` with `@mediabunny/mp3-encoder`. Ticket 011 left it alone
-  on purpose: MP3 is the compatibility format now rather than the only
-  compressed one, and mediabunny is already loaded whenever FLAC or Opus is
-  chosen. Whether a SIMD LAME build beats a fixed-point Shine build **in the
-  browser** is unmeasured by anybody — shine's own benchmarks are native
-  binaries. It needs a measurement before it can be a ticket.
-- Per-track export overrides. Bit depth, sample rate and output format are
-  master defaults, and a track cannot disagree with them. The mechanism is
-  ticket 003's; what a per-track override means for a batch that then produces
-  four formats in one zip is not decided.
+Nothing. Every item that was here graduated into tickets 029–038, and the
+fourteen features are built. The next unknowns belong to a new map: envelopes
+are the named fifteenth feature, below.
 
 ## Out of scope
 

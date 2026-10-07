@@ -5,6 +5,7 @@ import {
   gainToDb,
   maxAmplitude,
   peakNormalizationGain,
+  equalPowerCurve,
   joinedTimeline,
   regionFrameCount,
   rmsDbWindows,
@@ -384,5 +385,70 @@ describe("joinedTimeline", () => {
     );
     expect(at44.frameCount).toBe(3 * 44100);
     expect(at48.frameCount).toBe(3 * 48000);
+  });
+});
+
+describe("joinedTimeline with crossfades", () => {
+  const two = [
+    { start: 0, end: 2 },
+    { start: 10, end: 12 },
+  ];
+
+  it("is the butt-joined timeline exactly when every crossfade is zero", () => {
+    expect(joinedTimeline(two, 30, 48000, [0, 0])).toEqual(
+      joinedTimeline(two, 30, 48000)
+    );
+  });
+
+  it("pulls the next region back over the last by the crossfade", () => {
+    const joined = joinedTimeline(two, 30, 48000, [0, 100]);
+
+    expect(joined.spans[1].atFrame).toBe(2 * 48000 - 4800);
+    expect(joined.frameCount).toBe(4 * 48000 - 4800);
+    expect(joined.spans[0].crossfadeOutSec).toBe(0.1);
+    expect(joined.spans[1].crossfadeInSec).toBe(0.1);
+  });
+
+  it("ignores a crossfade into the first region", () => {
+    const joined = joinedTimeline(two, 30, 48000, [500, 0]);
+    expect(joined.spans[0].crossfadeInSec).toBe(0);
+    expect(joined.spans[0].atFrame).toBe(0);
+  });
+
+  it("caps a crossfade at half the shorter region", () => {
+    const joined = joinedTimeline(
+      [
+        { start: 0, end: 2 },
+        { start: 10, end: 10.5 },
+      ],
+      30,
+      48000,
+      [0, 5000]
+    );
+
+    expect(joined.spans[1].crossfadeInSec).toBe(0.25);
+  });
+});
+
+describe("equalPowerCurve", () => {
+  it("starts and ends exactly", () => {
+    const rise = equalPowerCurve("in");
+    const fall = equalPowerCurve("out");
+
+    expect(rise[0]).toBe(0);
+    expect(rise[rise.length - 1]).toBe(1);
+    expect(fall[0]).toBe(1);
+    expect(fall[fall.length - 1]).toBe(0);
+  });
+
+  it("holds the summed power at 1 all the way across", () => {
+    // The whole reason for the shape. Two different sounds add as powers, so
+    // this sum is what a listener hears through the seam.
+    const rise = equalPowerCurve("in", 101);
+    const fall = equalPowerCurve("out", 101);
+
+    for (let index = 0; index < rise.length; index++) {
+      expect(rise[index] ** 2 + fall[index] ** 2).toBeCloseTo(1, 6);
+    }
   });
 });

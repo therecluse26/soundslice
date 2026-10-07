@@ -35,6 +35,11 @@ let worker: Worker | null = null;
 let nextId = 1;
 const jobs = new Map<number, Job>();
 
+/** The next job id. Every job on the one worker shares this one counter. */
+export function nextJobId(): number {
+  return nextId++;
+}
+
 function ensureWorker(): Worker {
   if (worker) return worker;
 
@@ -63,6 +68,14 @@ function ensureWorker(): Worker {
       (job.resolve as (value: Blob) => void)(reply.blob);
       return;
     }
+    if ("magnitudes" in reply) {
+      (job.resolve as (value: Float32Array) => void)(reply.magnitudes);
+      return;
+    }
+    if ("channels" in reply) {
+      (job.resolve as (value: Float32Array[]) => void)(reply.channels);
+      return;
+    }
     (job.resolve as (value: Analysis) => void)(reply.analysis);
   };
 
@@ -81,7 +94,12 @@ function ensureWorker(): Worker {
   return worker;
 }
 
-function send<T>(
+/**
+ * Posts one job and returns its handle. Exported for `spectral-jobs.ts`, which
+ * keeps its three job kinds out of Simple view's bundle — nothing else should
+ * need it.
+ */
+export function send<T>(
   request: WorkerRequest,
   transfer: Transferable[],
   onProgress?: (fraction: number) => void

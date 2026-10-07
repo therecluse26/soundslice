@@ -74,14 +74,27 @@ export function measurementKey(
   fileName: string,
   regions: readonly Region[],
   stack: EditStack,
-  sampleRate: number
+  sampleRate: number,
+  /**
+   * A join's crossfades. They change what a measuring pass hears, so two joins
+   * that differ only in a crossfade must not share a measurement. Absent or all
+   * zero gives the key every caller had before ticket 034.
+   */
+  crossfadesMs: readonly number[] = []
 ): MeasurementKey {
-  return JSON.stringify([
-    fileName,
-    regions.map(regionAudioSignature),
-    stack,
-    sampleRate,
-  ]);
+  const crossfaded = crossfadesMs.some((ms) => ms > 0);
+
+  return JSON.stringify(
+    [
+      fileName,
+      regions.map(regionAudioSignature),
+      stack,
+      sampleRate,
+      ...(crossfaded ? [crossfadesMs] : []),
+    ],
+    // A noise profile is thousands of numbers. Its id says the same thing.
+    (key, value) => (key === "profile" && value ? value.id : value)
+  );
 }
 
 export function recallMeasurement(

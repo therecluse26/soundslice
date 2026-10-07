@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { scheduleRegionEnvelope } from "./graph";
-import { PREVIEW_MEASURE_LIMIT_SEC, measuresUnasked } from "./preview";
+import {
+  PREVIEW_MEASURE_LIMIT_SEC,
+  measuresUnasked,
+  profileForStretch,
+} from "./preview";
 import {
   forgetMeasurements,
   measurementKey,
   recallMeasurement,
   rememberMeasurement,
 } from "./preview-measurements";
-import { Region, defaultRegion } from "./edit-stack";
+import { EditStack, Region, defaultRegion } from "./edit-stack";
 import { OutputFormat } from "./output-format";
 
 /**
@@ -246,5 +250,36 @@ describe("the key is a string, so it can be a Map key", () => {
     expect(measurementKey("a.wav", [defaultRegion(0, 30)], [], 44100)).not.toBe(
       measurementKey("a.wav", [defaultRegion(0, 30)], [], 48000)
     );
+  });
+});
+
+describe("the noise profile follows a stretched region's pitch", () => {
+  const profile = {
+    id: "ss-noise-1",
+    magnitudes: new Float32Array(1025),
+    fftSize: 2048,
+    sampleRate: 44100,
+  };
+  const stack: EditStack = [
+    { op: "noiseReduction", amount: 0.8, profile },
+    { op: "gain", db: -3 },
+  ];
+
+  it("leaves the stack alone with no pitch change", () => {
+    const region = { ...defaultRegion(0, 10), stretch: { rate: 1.5, semitones: 0 } };
+    expect(profileForStretch(stack, region)).toBe(stack);
+    expect(profileForStretch(stack, defaultRegion(0, 10))).toBe(stack);
+  });
+
+  it("reads the profile an octave up for +12 semitones", () => {
+    const region = { ...defaultRegion(0, 10), stretch: { rate: 1, semitones: 12 } };
+    const moved = profileForStretch(stack, region);
+    const first = moved[0];
+    expect(first.op === "noiseReduction" && first.profile.sampleRate).toBe(88200);
+    expect(first.op === "noiseReduction" && first.profile.magnitudes).toBe(
+      profile.magnitudes
+    );
+    expect(moved[1]).toBe(stack[1]);
+    expect(profile.sampleRate).toBe(44100);
   });
 });

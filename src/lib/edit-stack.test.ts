@@ -7,6 +7,8 @@ import {
   Region,
   defaultRegion,
   firstRegion,
+  insertCanonically,
+  isCanonical,
   needsMeasurement,
   orderedRegions,
   regionAudioSignature,
@@ -53,7 +55,8 @@ describe("simpleStack", () => {
   });
 
   it("normalizes twice with both on, and the two are different operations", () => {
-    // Not a mistake, and not the canonical order.
+    // Not a mistake. Since ticket 029 it **is** the canonical order: peak
+    // normalization is the input slot.
     //
     // The first is **gain staging**: it lifts a quiet recording to the
     // compressor's −8 dB threshold so the compressor engages at all. Peak
@@ -338,5 +341,75 @@ describe("regionAudioSignature", () => {
     expect(
       regionAudioSignature({ ...region, fade: { inMs: 0, outMs: 20 } })
     ).not.toEqual(regionAudioSignature(region));
+  });
+});
+
+describe("the canonical order, after ticket 029", () => {
+  it("puts peak normalization at the input, straight after noise reduction", () => {
+    expect(CANONICAL_ORDER.slice(0, 3)).toEqual([
+      "noiseReduction",
+      "peakNormalization",
+      "eq",
+    ]);
+  });
+
+  it("holds every one of Simple view's four stacks", () => {
+    // Ticket 008's hole: with both switches on, Simple view's stack could not
+    // be expressed in the canonical order, so "Reset order" had nothing correct
+    // to reset to. It has now.
+    for (const normalizeAudio of [false, true]) {
+      for (const applyPostProcessing of [false, true]) {
+        const stack = simpleStack({ normalizeAudio, applyPostProcessing });
+        expect(isCanonical(stack)).toBe(true);
+        expect(sortToCanonical(stack)).toEqual(stack);
+      }
+    }
+  });
+
+  it("says a reordered stack is not canonical", () => {
+    expect(
+      isCanonical([
+        { op: "limiter", ceilingDb: -1 },
+        { op: "eq", bands: [] },
+      ])
+    ).toBe(false);
+    expect(isCanonical([])).toBe(true);
+  });
+});
+
+describe("insertCanonically", () => {
+  it("gives the same answer as sorting, on a canonical stack", () => {
+    const stack: EditStack = [
+      { op: "eq", bands: [] },
+      { op: "limiter", ceilingDb: -1 },
+    ];
+    const added = insertCanonically(stack, { op: "gain", db: 2 });
+
+    expect(names(added)).toEqual(["eq", "gain", "limiter"]);
+    expect(added).toEqual(sortToCanonical([...stack, { op: "gain", db: 2 }]));
+  });
+
+  it("leaves a stack the user reordered in the user's order", () => {
+    // The limiter was dragged to the front on purpose. Switching on a
+    // compressor must not drag it back.
+    const stack: EditStack = [
+      { op: "limiter", ceilingDb: -1 },
+      { op: "eq", bands: [] },
+    ];
+
+    expect(
+      names(insertCanonically(stack, { ...COMPRESSOR_DEFAULTS }))
+    ).toEqual(["limiter", "eq", "compressor"]);
+  });
+
+  it("goes to the front when nothing comes before it", () => {
+    expect(
+      names(
+        insertCanonically([{ ...LIMITER_DEFAULTS }], {
+          op: "peakNormalization",
+          targetDbfs: 0,
+        })
+      )
+    ).toEqual(["peakNormalization", "limiter"]);
   });
 });

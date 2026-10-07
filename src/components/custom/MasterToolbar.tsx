@@ -42,12 +42,13 @@ import { countRender } from "@/lib/render-count";
 const LoudnessTarget = lazy(() => import("./advanced/LoudnessTarget"));
 
 /**
- * **Join** — separate files, or one joined file per track.
+ * **Join**, bit depth and sample rate — the master export choices Simple view
+ * has no question for.
  *
- * Under Output Format, because it is the other half of "what shape is my
- * output". Advanced only, and lazy for the same reason as above.
+ * Under Output Format, because they are the rest of "what shape is my output".
+ * Advanced only, and lazy for the same reason as above.
  */
-const JoinRegions = lazy(() => import("./advanced/JoinRegions"));
+const MasterExportOptions = lazy(() => import("./advanced/MasterExportOptions"));
 
 const MasterToolbar = () => {
   if (import.meta.env.DEV) countRender("MasterToolbar");
@@ -69,6 +70,9 @@ const MasterToolbar = () => {
     (state) => state.setProcessingLoading
   );
   const setSliceProgress = useAudioStore((state) => state.setSliceProgress);
+  const setExportController = useAudioStore(
+    (state) => state.setExportController
+  );
 
   const [downloading, setDownloading] = useState(false);
 
@@ -81,6 +85,10 @@ const MasterToolbar = () => {
     setProcessingLoading(true);
     setSliceProgress(null);
 
+    // The overlay's Cancel reads this from the store. Ticket 035.
+    const controller = new AbortController();
+    setExportController(controller);
+
     try {
       // **The same rule the card's own button applies.** In Simple view a track
       // exports the one region it draws, and `designs/view-state.md` §4 says
@@ -91,13 +99,17 @@ const MasterToolbar = () => {
           .getState()
           .tracks.map((track) => exportableTrack(track, view)),
         masterExportSettings(),
-        { onProgress: setSliceProgress }
+        { onProgress: setSliceProgress, signal: controller.signal }
       );
+
+      // Cancelled: nothing is downloaded, and no half-built zip exists.
+      if (!zip || controller.signal.aborted) return;
 
       // The zip is the only export blob that ever becomes a URL, and
       // `downloadBlob` revokes it. Every file inside it went in as a `Blob`.
       downloadBlob(zip, "sliced-audio.zip");
     } finally {
+      setExportController(null);
       setSliceProgress(null);
       setProcessingLoading(false);
       setDownloading(false);
@@ -212,13 +224,13 @@ const MasterToolbar = () => {
             </Select>
 
             {/*
-              Advanced view only. The format decides **what kind of file**; this
-              decides **how many**. They are the two halves of one question, so
-              they sit together.
+              Advanced view only. The format decides **what kind of file**; these
+              decide **how many**, and how each is stored. They are one
+              question, so they sit together.
             */}
             {view === "advanced" && (
               <Suspense fallback={null}>
-                <JoinRegions />
+                <MasterExportOptions />
               </Suspense>
             )}
           </div>

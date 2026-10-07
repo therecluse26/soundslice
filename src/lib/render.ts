@@ -65,6 +65,16 @@ export type RenderOptions = {
    * play is instant.
    */
   onMeasured?: (measured: ReadonlyMap<number, number>) => void;
+
+  /**
+   * The crossfade into each region from the one before it, in milliseconds.
+   * Only a join with crossfades has any. See `GraphPlan.crossfadesMs`.
+   *
+   * Every pass gets it, the measuring ones included — a loudness pass that heard
+   * a butt join while the export wrote a crossfaded one would measure a file
+   * nobody exports.
+   */
+  crossfadesMs?: readonly number[];
 };
 
 /**
@@ -136,7 +146,8 @@ export async function renderRegions(
     stack,
     measured,
     undefined,
-    passProgress(totalPasses - 1)
+    passProgress(totalPasses - 1),
+    options.crossfadesMs
   );
 }
 
@@ -179,7 +190,8 @@ export async function measureStack(
       stack,
       measured,
       index,
-      options.onPassProgress?.(pass)
+      options.onPassProgress?.(pass),
+      options.crossfadesMs
     );
 
     const operation = stack[index];
@@ -246,14 +258,20 @@ async function renderPass(
   stack: EditStack,
   measured: ReadonlyMap<number, number>,
   upTo: number | undefined,
-  onProgress: ((fraction: number) => void) | undefined
+  onProgress: ((fraction: number) => void) | undefined,
+  crossfadesMs: readonly number[] | undefined
 ): Promise<AudioBuffer> {
   const sampleRate = source.sampleRate;
 
   // The clamp and the frame count live in one place now. They used to exist
   // here and again in `buildGraph`, which is two chances to disagree about what
   // a region past the end of the file means.
-  const frames = joinedTimeline(regions, source.duration, sampleRate).frameCount;
+  const frames = joinedTimeline(
+    regions,
+    source.duration,
+    sampleRate,
+    crossfadesMs
+  ).frameCount;
 
   const context = new OfflineAudioContext(
     source.numberOfChannels,
@@ -261,7 +279,14 @@ async function renderPass(
     sampleRate
   );
 
-  const graph = buildGraph(context, { source, regions, stack, measured, upTo });
+  const graph = buildGraph(context, {
+    source,
+    regions,
+    crossfadesMs,
+    stack,
+    measured,
+    upTo,
+  });
   graph.tail.connect(context.destination);
 
   if (onProgress) scheduleProgress(context, frames, sampleRate, onProgress);
@@ -328,4 +353,61 @@ function scheduleProgress(
         // needs no resume. One missing step on a progress bar is not an error.
       });
   }
+}
+
+/**
+ * Lays rendered buffers end to end, into one buffer. **Joining across tracks.**
+ *
+ * Each buffer is one track's own join, already through that track's own stack.
+ * This is the step after: the tracks butt-join in card order, at one rate, with
+ * as many channels as the widest of them. A mono track joined to a stereo one
+ * is spread to both sides by Web Audio's own up-mix, the "speakers" rule a mono
+ * source connected to a stereo destination always gets.
+ *
+ * An `OfflineAudioContext` and not a copy loop, for standing rule 7: copying a
+ * 45-minute file sample by sample on the main thread is exactly the freeze
+ * `AudioTrimmer.trimAudio` was deleted for.
+ *
+ * Every buffer must share one sample rate. `AudioService` decodes every track
+ * of a cross-track join at the same rate for exactly this reason.
+ */
+export async function concatenate(
+  buffers: readonly AudioBuffer[],
+  options: Pick<RenderOptions, "onProgress"> = {}
+): Promise<AudioBuffer> {
+  if (buffers.length === 0) {
+    throw new Error("concatenate was given no buffers.");
+  }
+
+  const sampleRate = buffers[0].sampleRate;
+  if (buffers.some((buffer) => buffer.sampleRate !== sampleRate)) {
+    throw new Error(
+      "concatenate needs one sample rate. Decode every track at the export's " +
+        "rate before joining across tracks."
+    );
+  }
+
+  const channels = Math.max(...buffers.map((buffer) => buffer.numberOfChannels));
+  const frames = Math.max(
+    1,
+    buffers.reduce((total, buffer) => total + buffer.length, 0)
+  );
+
+  const context = new OfflineAudioContext(channels, frames, sampleRate);
+
+  let at = 0;
+  for (const buffer of buffers) {
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(context.destination);
+    // Whole frames, so the seams cannot drift: `at / sampleRate` is exact.
+    source.start(at / sampleRate);
+    at += buffer.length;
+  }
+
+  if (options.onProgress) {
+    scheduleProgress(context, frames, sampleRate, options.onProgress);
+  }
+
+  return context.startRendering();
 }

@@ -7,7 +7,8 @@ import {
   useAudioStore,
 } from "@/stores/audio-store";
 import type { EditorTrack } from "@/stores/audio-store";
-import { EditStack, needsMeasurement } from "@/lib/edit-stack";
+import { EditStack, isStretched, needsMeasurement } from "@/lib/edit-stack";
+import { sharedAudioContext } from "@/lib/audio-context";
 import { compressorSettingsIn } from "@/lib/graph";
 import { calibrateAll } from "@/lib/compressor-calibration";
 import {
@@ -144,7 +145,11 @@ export function usePreview(
 
     const stack = currentStack();
     const effects = track?.previewEffects ?? true;
-    const signature = JSON.stringify([stack, effects, [...(measured ?? [])]]);
+    // A noise profile is a thousand numbers; its id says the same thing.
+    const signature = JSON.stringify(
+      [stack, effects, [...(measured ?? [])]],
+      (key, value) => (key === "profile" && value ? value.id : value)
+    );
 
     if (signature === applied.current) return;
     applied.current = signature;
@@ -173,6 +178,15 @@ export function usePreview(
     //
     // Found by the output meter, on a 1 kHz tone, in the first minute of
     // having one. It is inaudible and it was never going to be found by ear.
+    // **Noise reduction needs the spectral worklet.** Until it loads, the
+    // graph passes the sound through; once it is in, build again. The module
+    // is fetched only by a stack that has the block — standing rule 6.
+    if (stack.some((operation) => operation.op === "noiseReduction")) {
+      void loadSpectralWorklet().then(() => {
+        if (applied.current === signature) graph.current?.update(plan);
+      });
+    }
+
     void calibrateAll(compressorSettingsIn(stack)).then(() => {
       // A newer plan may have landed while the offline render ran. Rebuilding
       // from this one would put the graph back to a stack the user has left.
@@ -190,8 +204,14 @@ export function usePreview(
   useEffect(() => {
     if (!wavesurfer || !region) return;
 
+    // **Time and pitch.** The element plays the region `rate` times as fast,
+    // so every envelope time is divided by it: the fades and the gain are
+    // written against the time a listener hears, not the file's.
+    const speed = isStretched(region) ? region.stretch?.rate ?? 1 : 1;
+    const heard = { ...region, start: 0, end: (region.end - region.start) / speed };
+
     const scheduleFrom = (time: number) =>
-      graph.current?.schedule(region, time - region.start);
+      graph.current?.schedule(heard, (time - region.start) / speed);
 
     const off = [
       wavesurfer.on("play", () => {
@@ -215,6 +235,32 @@ export function usePreview(
     if (wavesurfer.isPlaying()) scheduleFrom(wavesurfer.getCurrentTime());
 
     return () => off.forEach((unsubscribe) => unsubscribe());
+  }, [wavesurfer, region]);
+
+  // Speed through the element, the rest of the pitch through the worklet.
+  // `preservePitch: false` makes the element behave like tape, which is what
+  // the export's varispeed does. Ticket 037.
+  useEffect(() => {
+    if (!wavesurfer) return;
+
+    const stretched = region && isStretched(region) ? region.stretch : undefined;
+    const rate = stretched?.rate ?? 1;
+    const remaining = stretched ? stretched.semitones - 12 * Math.log2(rate) : 0;
+
+    wavesurfer.setPlaybackRate(rate, false);
+
+    if (Math.abs(remaining) < 1e-6) {
+      graph.current?.setPitch(0);
+      return;
+    }
+
+    let live = true;
+    void loadSpectralWorklet().then(() => {
+      if (live) graph.current?.setPitch(remaining);
+    });
+    return () => {
+      live = false;
+    };
   }, [wavesurfer, region]);
 
   const wanted = currentStack().some(needsMeasurement);
@@ -258,4 +304,15 @@ export function usePreview(
     measureNow: () => void measure(true),
     meters: meters.current,
   };
+}
+
+/**
+ * Loads the spectral worklet onto the shared live context.
+ *
+ * A dynamic import: the worklet's source is the whole spectral kit, and only a
+ * stack with noise reduction or a stretched region needs it. Standing rule 6.
+ */
+async function loadSpectralWorklet(): Promise<void> {
+  const { ensureSpectralWorklet } = await import("@/lib/spectral-worklet");
+  await ensureSpectralWorklet(sharedAudioContext());
 }

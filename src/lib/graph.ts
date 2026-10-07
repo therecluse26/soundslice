@@ -19,8 +19,9 @@
  */
 
 import { EditStack, Operation, Region } from "./edit-stack";
-import { dbToGain, fadeTimes, joinedTimeline } from "./dsp";
+import { dbToGain, equalPowerCurve, fadeTimes, joinedTimeline } from "./dsp";
 import { CompressorSettings, makeupGain } from "./compressor-calibration";
+import { DENOISE_PROCESSOR, hasSpectralWorklet } from "./worklet-registry";
 
 /**
  * Every set of compressor settings a stack will build, so a caller can
@@ -75,6 +76,18 @@ export type GraphPlan = {
    * rather than fork it. Standing rule 1, ADR 0001.
    */
   regions: readonly Region[];
+
+  /**
+   * The crossfade into each region from the one before it, in milliseconds, by
+   * index into `regions`. Only a join has any.
+   *
+   * Absent or all zero is a butt join, and the graph is then **exactly** the
+   * one ticket 028 built: no curve is scheduled anywhere, so not one exported
+   * byte moves. A crossfade pulls a region back over the end of the one before
+   * it and swaps both fades at that seam for equal-power curves — see
+   * `equalPowerCurve` for why.
+   */
+  crossfadesMs?: readonly number[];
 
   stack: EditStack;
 
@@ -199,7 +212,12 @@ export function buildGraph(
   const { source: buffer, regions } = plan;
   const startTime = plan.startTime ?? 0;
 
-  const timeline = joinedTimeline(regions, buffer.duration, buffer.sampleRate);
+  const timeline = joinedTimeline(
+    regions,
+    buffer.duration,
+    buffer.sampleRate,
+    plan.crossfadesMs
+  );
 
   const heads: AudioNode[] = [];
   const starts: Array<() => void> = [];
@@ -215,7 +233,10 @@ export function buildGraph(
     // series would be identical and cost a node; one envelope carries both.
     // `regionGainNode` already took an absolute `startTime` — preview needed one
     // to seek into the middle of a fade, and a join needs the same thing.
-    const envelope = regionGainNode(context, region, span.durationSec, at);
+    const envelope = regionGainNode(context, region, span.durationSec, at, {
+      inSec: span.crossfadeInSec,
+      outSec: span.crossfadeOutSec,
+    });
     source.connect(envelope);
 
     heads.push(envelope);
@@ -262,12 +283,16 @@ function regionGainNode(
   context: BaseAudioContext,
   region: Region,
   durationSec: number,
-  startTime: number
+  startTime: number,
+  crossfade: Crossfade
 ): GainNode {
   const node = context.createGain();
-  scheduleRegionEnvelope(node.gain, region, durationSec, 0, startTime);
+  scheduleRegionEnvelope(node.gain, region, durationSec, 0, startTime, crossfade);
   return node;
 }
+
+/** The crossfades at a region's two seams in a join, in seconds. 0 is none. */
+export type Crossfade = { inSec: number; outSec: number };
 
 /**
  * Writes the region's gain and fade edges onto an `AudioParam`.
@@ -289,8 +314,20 @@ export function scheduleRegionEnvelope(
   /** Seconds into the region that playback is starting from. */
   positionSec: number,
   /** Context time that position is heard at. */
-  startTime: number
+  startTime: number,
+  /**
+   * The crossfades at this region's seams, when it sits in a join.
+   *
+   * Only an export of a join passes one, and it always starts from position 0.
+   * Preview plays one region at a time and never crossfades.
+   */
+  crossfade?: Crossfade
 ): void {
+  if (crossfade && (crossfade.inSec > 0 || crossfade.outSec > 0)) {
+    scheduleCrossfadedEnvelope(gain, region, durationSec, startTime, crossfade);
+    return;
+  }
+
   const level = dbToGain(region.gainDb);
   const { fadeInEnd, fadeOutStart } = fadeTimes(
     durationSec,
@@ -317,6 +354,66 @@ export function scheduleRegionEnvelope(
       gain.setValueAtTime(level, startTime + (fadeOutStart - at));
     }
     gain.linearRampToValueAtTime(0, startTime + (durationSec - at));
+  }
+}
+
+/**
+ * A region's envelope in a join where at least one of its seams crossfades.
+ *
+ * Each edge is one of two shapes:
+ *
+ * - **a seam with a crossfade** — an equal-power curve as long as the overlap,
+ *   in place of the region's own fade at that edge;
+ * - **anything else** — the region's own linear fade edge, exactly as
+ *   `scheduleRegionEnvelope` writes it.
+ *
+ * `setValueCurveAtTime` may not share its time span with any other event, so
+ * nothing is scheduled at the curve's own start: the value before it is
+ * whatever came last, and the curve takes over from its first point.
+ */
+function scheduleCrossfadedEnvelope(
+  gain: AudioParam,
+  region: Region,
+  durationSec: number,
+  startTime: number,
+  crossfade: Crossfade
+): void {
+  const level = dbToGain(region.gainDb);
+  const faded = fadeTimes(
+    durationSec,
+    crossfade.inSec > 0 ? 0 : region.fade.inMs,
+    crossfade.outSec > 0 ? 0 : region.fade.outMs
+  );
+
+  // A linear edge may not reach into the other edge's curve: an event inside a
+  // curve's span is a `NotSupportedError`. The timeline caps each crossfade at
+  // half the region, so two curves never meet; a long linear fade beside a
+  // curve is shortened to stop where the curve begins.
+  const fadeInEnd = Math.min(faded.fadeInEnd, durationSec - crossfade.outSec);
+  const fadeOutStart = Math.max(faded.fadeOutStart, crossfade.inSec);
+
+  const scaled = (curve: Float32Array) => curve.map((value) => value * level);
+
+  if (crossfade.inSec > 0) {
+    gain.setValueCurveAtTime(
+      scaled(equalPowerCurve("in")),
+      startTime,
+      crossfade.inSec
+    );
+  } else {
+    gain.setValueAtTime(fadeInEnd > 0 ? 0 : level, startTime);
+    if (fadeInEnd > 0) gain.linearRampToValueAtTime(level, startTime + fadeInEnd);
+  }
+
+  if (crossfade.outSec > 0) {
+    gain.setValueCurveAtTime(
+      scaled(equalPowerCurve("out")),
+      startTime + durationSec - crossfade.outSec,
+      crossfade.outSec
+    );
+  } else if (fadeOutStart < durationSec) {
+    gain.setValueAtTime(level, startTime + fadeOutStart);
+    gain.linearRampToValueAtTime(0, startTime + durationSec);
   }
 }
 
@@ -380,11 +477,39 @@ function operationSegment(
       return one(node);
     }
 
-    case "noiseReduction":
-      throw new Error(
-        "Noise reduction has no graph yet. It needs an AudioWorklet and a " +
-          "noise profile, and neither exists. See the map's feature tickets."
+    case "noiseReduction": {
+      // **Export never reaches this.** `prepareSource` denoises in the encode
+      // worker and hands the graph the rest of the stack, because a worklet on
+      // an `OfflineAudioContext` leaks the context. Reaching it offline means a
+      // caller skipped that step, and silently passing the noise through would
+      // export a file that sounds nothing like the preview.
+      if (
+        typeof OfflineAudioContext !== "undefined" &&
+        context instanceof OfflineAudioContext
+      ) {
+        throw new Error(
+          "Noise reduction reached an offline graph. Export denoises before the " +
+            "graph — see prepare-source.ts."
+        );
+      }
+
+      // Preview, before the worklet has loaded: pass the sound through. It is
+      // rebuilt with the real node the moment the module is in.
+      if (!hasSpectralWorklet(context) || operation.amount <= 0) {
+        return one(context.createGain());
+      }
+
+      return one(
+        new AudioWorkletNode(context, DENOISE_PROCESSOR, {
+          processorOptions: {
+            magnitudes: operation.profile.magnitudes,
+            fftSize: operation.profile.fftSize,
+            profileRate: operation.profile.sampleRate,
+            amount: operation.amount,
+          },
+        })
       );
+    }
 
     default: {
       // Every name in the union is handled above. This catches a name added to

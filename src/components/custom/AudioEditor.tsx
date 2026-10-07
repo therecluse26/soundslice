@@ -15,6 +15,7 @@ import ZoomPlugin from 'wavesurfer.js/dist/plugins/zoom';
 import { Card, CardContent } from "../ui/card";
 import { Button } from "../ui/button";
 import {
+  Cross2Icon,
   PauseIcon,
   PlayIcon,
   DownloadIcon,
@@ -147,6 +148,9 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   const addTrackRegion = useAudioStore((state) => state.addTrackRegion);
   const updateTrackRegion = useAudioStore((state) => state.updateTrackRegion);
   const removeTrackRegion = useAudioStore((state) => state.removeTrackRegion);
+  const removeTrack = useAudioStore((state) => state.removeTrack);
+  const startFresh = useAudioStore((state) => state.startFresh);
+  const restoreTrack = useAudioStore((state) => state.restoreTrack);
   const selectTrackRegion = useAudioStore((state) => state.selectTrackRegion);
 
   const isMobile = useMediaQuery("(max-width: 800px)");
@@ -187,6 +191,14 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
   // State
   const [ready, setReady] = useState(false);
   const [downloading, setDownloading] = useState(false);
+
+  /**
+   * This card's own export's off switch. Ticket 035.
+   *
+   * A ref and not store state: only this card's Cancel reads it, and the
+   * master toolbar's export has its own in the store, which the overlay reads.
+   */
+  const exportController = useRef<AbortController | null>(null);
 
   // Memoized values
   const regionsPlugin = useMemo(() => RegionsPlugin.create(), []);
@@ -441,6 +453,11 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
       applying.current = false;
     }
 
+    // Only against a loaded file. With no audio the duration is 0 and the
+    // plugin clamps every region to 0–0; writing that back would erase the
+    // user's regions. That happened, on a waveform rebuilt mid-session.
+    if (!(wavesurfer.getDuration() > 0)) return;
+
     for (const correction of corrections) {
       updateTrackRegion(
         file.name,
@@ -482,15 +499,40 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
     if (seeded.current && view !== "simple") return;
 
     const duration = wavesurfer.getDuration();
-    ensureTrackRegions(file.name, [
-      defaultRegion(
-        Math.min(DEFAULT_REGION.start, Math.max(0, duration - 1)),
-        Math.min(DEFAULT_REGION.end, duration)
-      ),
-    ]);
+    const fallback = defaultRegion(
+      Math.min(DEFAULT_REGION.start, Math.max(0, duration - 1)),
+      Math.min(DEFAULT_REGION.end, duration)
+    );
 
+    const firstTime = !seeded.current;
     seeded.current = true;
-  }, [ready, wavesurfer, regions.length, view, ensureTrackRegions, file.name]);
+
+    if (!firstTime) {
+      ensureTrackRegions(file.name, [fallback]);
+      return;
+    }
+
+    // **The first time only: was this file worked on before?** Autosave keeps
+    // each file's work, and a dropped file that matches gets it back. A dynamic
+    // import, so Simple view downloads the parser only when a card seeds — and
+    // both store calls are no-ops once the track has regions, so a second run
+    // of this effect cannot seed twice. Ticket 038.
+    void import("@/lib/saved-project")
+      .then(({ savedWorkFor }) => savedWorkFor(file))
+      .catch(() => null)
+      .then((work) => {
+        if (work) restoreTrack(file.name, work);
+        else ensureTrackRegions(file.name, [fallback]);
+      });
+  }, [
+    ready,
+    wavesurfer,
+    regions.length,
+    view,
+    ensureTrackRegions,
+    restoreTrack,
+    file,
+  ]);
 
   /**
    * Drag on empty waveform makes a region. Advanced view only.
@@ -520,12 +562,18 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
       return;
     }
 
+    const controller = new AbortController();
+    exportController.current = controller;
+
     try {
       const files = await AudioService.sliceTrackFiles(
         exportableTrack(currentTrack, view),
         settings,
-        { prefix: "trimmed_" }
+        { prefix: "trimmed_", signal: controller.signal }
       );
+
+      // Cancelled: nothing downloads, and nothing says it did.
+      if (!files || controller.signal.aborted) return;
 
       // Zero regions exports nothing, and says nothing happened rather than
       // reporting a download that did not. Ticket 016's rule.
@@ -539,11 +587,12 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
         return;
       }
 
-      downloadBlob(
-        await AudioService.zipFiles(files),
-        `trimmed_${stemOf(file.name)}.zip`
-      );
+      const zip = await AudioService.zipFiles(files);
+      if (controller.signal.aborted) return;
+
+      downloadBlob(zip, `trimmed_${stemOf(file.name)}.zip`);
     } finally {
+      exportController.current = null;
       setDownloading(false);
     }
   };
@@ -750,11 +799,28 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
             } mt-4`}
           >
             <div>
-              <div className={isMobile ? "text-sm" : ""}>
-                File:{" "}
-                <i className="text-primary text-wrap break-all">
-                  {file.name}
-                </i>
+              <div className={`flex items-center gap-2 ${isMobile ? "text-sm" : ""}`}>
+                <span>
+                  File:{" "}
+                  <i className="text-primary text-wrap break-all">
+                    {file.name}
+                  </i>
+                </span>
+                {/*
+                  Both views. Taking a file off the page is not an Advanced
+                  idea, and Ctrl+Z brings it back with all its work. Ticket 030.
+                */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 shrink-0 text-muted-foreground"
+                  aria-label={`Remove ${file.name}`}
+                  title="Remove this track (Ctrl+Z brings it back)"
+                  disabled={downloading}
+                  onClick={() => removeTrack(file.name)}
+                >
+                  <Cross2Icon />
+                </Button>
               </div>
               <div className={isMobile ? "text-sm" : ""}>
                 Selection duration:{" "}
@@ -762,6 +828,31 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
                   {formatTime(selected ? selected.end - selected.start : 0)}
                 </code>
               </div>
+              {track?.restored && (
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>Restored from your last session.</span>
+                  {/*
+                    One gesture, so Ctrl+Z brings the restored work back. The
+                    region is the one a new card gets. Ticket 038.
+                  */}
+                  <button
+                    type="button"
+                    className="underline hover:text-primary"
+                    onClick={() => {
+                      const duration = wavesurfer?.getDuration() ?? 0;
+                      startFresh(
+                        file.name,
+                        defaultRegion(
+                          Math.min(DEFAULT_REGION.start, Math.max(0, duration - 1)),
+                          Math.min(DEFAULT_REGION.end, duration)
+                        )
+                      );
+                    }}
+                  >
+                    Start fresh
+                  </button>
+                </div>
+              )}
               {regions.length === 0 && (
                 <div className="mt-1 text-sm text-amber-500">
                   No regions — this track exports nothing. Drag on the waveform
@@ -818,14 +909,15 @@ export const AudioEditor = React.memo(({ file }: EditorProps) => {
               )}
 
               {downloading ? (
+                // The running export's own button becomes its Cancel. It is
+                // where the pointer already is. Ticket 035.
                 <Button
-                  disabled
+                  onClick={() => exportController.current?.abort()}
+                  variant="outline"
                   className={isMobile ? "px-4 py-2 text-xs mb-2" : "px-4 py-2"}
                 >
                   <ReloadIcon className="animate-spin" />
-                  <span className="ml-2">
-                    {isMobile ? "Downloading..." : "Slice Audio"}
-                  </span>
+                  <span className="ml-2">Cancel</span>
                 </Button>
               ) : (
                 <Button

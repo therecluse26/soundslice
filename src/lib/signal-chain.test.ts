@@ -10,6 +10,7 @@ import {
   bandResponseDb,
   blockInfo,
   blockSummary,
+  chainOrder,
   clampBand,
   clampCompressor,
   compressorFraction,
@@ -30,8 +31,10 @@ import {
   gainReductionDb,
   hzFraction,
   operationIn,
+  moveInChain,
   ratioForOutputAtFullScale,
   replaceOperation,
+  shiftOperation,
   withOperation,
   withoutOperation,
 } from "./signal-chain";
@@ -45,10 +48,8 @@ describe("BLOCKS", () => {
     expect(new Set(BLOCKS.map((block) => block.op)).size).toBe(BLOCKS.length);
   });
 
-  it("marks noise reduction as the one that cannot be built yet", () => {
-    expect(BLOCKS.filter((block) => !block.built).map((block) => block.op)).toEqual([
-      "noiseReduction",
-    ]);
+  it("has every block built, since ticket 036 built noise reduction", () => {
+    expect(BLOCKS.filter((block) => !block.built)).toEqual([]);
   });
 
   it("finds a block by name", () => {
@@ -528,5 +529,120 @@ describe("ratioForOutputAtFullScale", () => {
   it("stops at the node's own maximum instead of reaching infinity", () => {
     expect(ratioForOutputAtFullScale(-20, -20)).toBe(COMPRESSOR_RANGES.ratio.max);
     expect(ratioForOutputAtFullScale(-20, -30)).toBe(COMPRESSOR_RANGES.ratio.max);
+  });
+});
+
+describe("chainOrder", () => {
+  it("is the canonical order for an untouched chain", () => {
+    expect(chainOrder([])).toEqual(CANONICAL_ORDER);
+    expect(chainOrder(withOperation([], "compressor"))).toEqual(CANONICAL_ORDER);
+  });
+
+  it("draws an on block where the stack puts it", () => {
+    const stack: EditStack = [
+      { op: "limiter", ceilingDb: -1 },
+      { op: "eq", bands: [] },
+    ];
+    const order = chainOrder(stack);
+
+    expect(order.indexOf("limiter")).toBeLessThan(order.indexOf("eq"));
+    expect(order).toHaveLength(7);
+    expect(new Set(order).size).toBe(7);
+  });
+
+  it("leaves a tile where it was drawn when its block is switched on", () => {
+    // A tile that jumped when switched on would look like the switch moved it.
+    const stack: EditStack = [
+      { op: "limiter", ceilingDb: -1 },
+      { op: "eq", bands: [] },
+    ];
+
+    for (const op of ["peakNormalization", "compressor", "gain"] as const) {
+      const before = chainOrder(stack).indexOf(op);
+      const after = chainOrder(withOperation(stack, op)).indexOf(op);
+      expect(after).toBe(before);
+    }
+  });
+});
+
+describe("moveInChain", () => {
+  const stack: EditStack = [
+    { op: "eq", bands: [] },
+    { op: "compressor", thresholdDb: -8, ratio: 4, kneeDb: 0, attackMs: 8, releaseMs: 50 },
+    { op: "limiter", ceilingDb: -1 },
+  ];
+
+  it("moves a block before another", () => {
+    expect(
+      moveInChain(stack, "limiter", "eq", "before").map((one) => one.op)
+    ).toEqual(["limiter", "eq", "compressor"]);
+  });
+
+  it("moves a block after another", () => {
+    expect(
+      moveInChain(stack, "eq", "compressor", "after").map((one) => one.op)
+    ).toEqual(["compressor", "eq", "limiter"]);
+  });
+
+  it("can drop next to a tile that is off", () => {
+    // Gain is off and drawn between the compressor and the limiter.
+    expect(
+      moveInChain(stack, "eq", "gain", "after").map((one) => one.op)
+    ).toEqual(["compressor", "eq", "limiter"]);
+  });
+
+  it("keeps every operation's settings", () => {
+    const moved = moveInChain(stack, "limiter", "eq", "before");
+    expect(operationIn(moved, "limiter")).toBe(stack[2]);
+  });
+
+  it("does nothing for a block that is off, or a drop on itself", () => {
+    expect(moveInChain(stack, "gain", "eq", "before")).toBe(stack);
+    expect(moveInChain(stack, "eq", "eq", "after")).toBe(stack);
+  });
+});
+
+describe("shiftOperation", () => {
+  const stack: EditStack = [
+    { op: "eq", bands: [] },
+    { op: "limiter", ceilingDb: -1 },
+  ];
+
+  it("swaps with the neighbouring operation", () => {
+    expect(shiftOperation(stack, "limiter", -1).map((one) => one.op)).toEqual([
+      "limiter",
+      "eq",
+    ]);
+  });
+
+  it("stops at either end", () => {
+    expect(shiftOperation(stack, "eq", -1)).toBe(stack);
+    expect(shiftOperation(stack, "limiter", 1)).toBe(stack);
+  });
+});
+
+describe("noise reduction is pinned to the input", () => {
+  const profile = {
+    id: "p",
+    magnitudes: new Float32Array(1025),
+    fftSize: 2048,
+    sampleRate: 48000,
+  };
+  const stack: EditStack = [
+    { op: "noiseReduction", amount: 0.5, profile },
+    { op: "gain", db: 0 },
+    { op: "limiter", ceilingDb: -1 },
+  ];
+
+  it("will not move", () => {
+    expect(moveInChain(stack, "noiseReduction", "limiter", "after")).toBe(stack);
+    expect(shiftOperation(stack, "noiseReduction", 1)).toBe(stack);
+  });
+
+  it("lets nothing in front of it", () => {
+    expect(moveInChain(stack, "limiter", "noiseReduction", "before")[0].op).toBe(
+      "noiseReduction"
+    );
+    expect(shiftOperation(stack, "gain", -1)).toBe(stack);
   });
 });

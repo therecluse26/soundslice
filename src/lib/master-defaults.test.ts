@@ -43,7 +43,7 @@ function complete(): MasterDefaults {
     exportFileType: OutputFormat.FLAC,
     bitDepth: 24,
     outputSampleRate: 48000,
-    joinRegions: true,
+    joinMode: "all",
   };
 }
 
@@ -56,14 +56,18 @@ describe("isMasterDefaults", () => {
     expect(isMasterDefaults(DEFAULT_MASTER_DEFAULTS)).toBe(true);
   });
 
-  it("rejects a value written before joinRegions existed", () => {
+  it("rejects a value written before joinMode existed", () => {
     // The version bump is what makes this reset deliberate rather than a
     // surprise. Without the bump the guard would still reject it — the user
     // would lose their settings anyway, and nothing would say why.
-    const { joinRegions, ...v4 } = complete();
-    void joinRegions;
+    const { joinMode, ...rest } = complete();
+    void joinMode;
 
-    expect(isMasterDefaults(v4)).toBe(false);
+    expect(isMasterDefaults({ ...rest, joinRegions: true })).toBe(false);
+  });
+
+  it("rejects a join mode it does not know", () => {
+    expect(isMasterDefaults({ ...complete(), joinMode: "sideways" })).toBe(false);
   });
 
   it("rejects a missing or wrongly typed value, one field at a time", () => {
@@ -141,8 +145,8 @@ describe("the round trip through localStorage", () => {
   });
 
   it("discards a value that fails the guard, rather than trusting the version", () => {
-    const { joinRegions, ...v4 } = complete();
-    void joinRegions;
+    const { joinMode, ...v4 } = complete();
+    void joinMode;
 
     writePersisted(
       MASTER_DEFAULTS_STORAGE_KEY,
@@ -192,7 +196,7 @@ describe("the round trip through localStorage", () => {
 
 describe("DEFAULT_MASTER_DEFAULTS", () => {
   it("joins nothing, so today's behaviour is what a new user gets", () => {
-    expect(DEFAULT_MASTER_DEFAULTS.joinRegions).toBe(false);
+    expect(DEFAULT_MASTER_DEFAULTS.joinMode).toBe("separate");
   });
 
   it("is what Simple view has always exported", () => {
@@ -203,7 +207,7 @@ describe("DEFAULT_MASTER_DEFAULTS", () => {
       exportFileType: OutputFormat.WAV,
       bitDepth: 16,
       outputSampleRate: null,
-      joinRegions: false,
+      joinMode: "separate",
     });
   });
 });

@@ -1,5 +1,7 @@
 import { EditorTrack } from "@/stores/audio-store";
-import { firstRegion } from "./edit-stack";
+import { firstRegion, isStretched } from "./edit-stack";
+import { JoinMode, joins } from "./master-defaults";
+import { hasExportOverrides } from "./track-work";
 import {
   DEFAULT_BIT_DEPTH,
   OutputFormat,
@@ -17,8 +19,8 @@ export type ExportChoice = {
   exportFileType: OutputFormat;
   bitDepth: number;
   outputSampleRate: number | null;
-  /** **Join** — one file per track. Simple view has no control for it. */
-  joinRegions: boolean;
+  /** **Join** — fewer files than regions. Simple view has no control for it. */
+  joinMode: JoinMode;
 };
 
 /** True when this export cannot be described by Simple view's one select. */
@@ -31,7 +33,7 @@ export function isAdvancedExportChoice(choice: ExportChoice): boolean {
     // choice before it existed. It folds into the same single `+= 1`: FLAC at
     // 24-bit, joined, still reads "1 Advanced setting active", because it is
     // still one sentence — "this export is not one Simple view could describe".
-    choice.joinRegions
+    joins(choice.joinMode)
   );
 }
 
@@ -50,10 +52,7 @@ export function isAdvancedExportChoice(choice: ExportChoice): boolean {
  * Counting per item was rejected. A normal Advanced project would read
  * "37 Advanced settings active", which tells the user nothing.
  *
- * Today this can only ever return 0, 1 or 2. Advanced view's Sound and Regions
- * sections are still empty, and there are no per-track overrides yet — every
- * track reads the same master settings. Each branch below names the ticket that
- * will make it reachable.
+ * Each branch below names the ticket that made it reachable.
  */
 export function countAdvancedSettings(
   tracks: EditorTrack[],
@@ -80,6 +79,18 @@ export function countAdvancedSettings(
   // matching the moment the user changes a master switch — the track would keep
   // its own copy and Simple view would not say so.
   if (tracks.some((track) => track.stack !== undefined)) count += 1;
+
+  // A track that exports in its own format, depth or rate. **One in total**,
+  // the rule's own words: "any per-track override of a master default counts
+  // one, not one per track". Reachable since ticket 033.
+  if (tracks.some((track) => hasExportOverrides(track.exportOverrides))) {
+    count += 1;
+  }
+
+  // A region that is stretched or pitched. Simple view has no control for time
+  // and pitch, and it exports that region stretched all the same — the chip is
+  // how a Simple user learns why it sounds different. Reachable since ticket 036.
+  if (tracks.some((track) => track.regions.some(isStretched))) count += 1;
 
   return count;
 }

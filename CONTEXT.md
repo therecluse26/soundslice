@@ -184,9 +184,28 @@ loudness. Two tracks can share a peak and sound very different.
 _Avoid_: normalize (unqualified)
 
 **Noise profile**:
-A frequency measurement taken from a region the user marks as silent, used to
-subtract that noise from the whole track.
+A frequency measurement taken from a region that holds only noise, used to
+subtract that noise from the whole track. It describes the raw recording, so
+noise reduction is always first in the edit stack.
 _Avoid_: noise floor, sample
+
+**Input slot**:
+The place straight after noise reduction, where peak normalization sits. It
+sets the level going into EQ and the compressor, so a quiet recording reaches
+the compressor's threshold.
+_Avoid_: pre-gain, trim, input gain
+
+**Time and pitch**:
+A region's own speed and pitch, changed separately. Speed 0.5× to 2×, pitch
+−12 to +12 semitones. It belongs to the region, not to the edit stack, and it
+happens before every operation except noise reduction.
+_Avoid_: stretch (in the UI), tempo, varispeed
+
+**Prepare stage**:
+The part of an export that runs before the Web Audio graph, in the encode
+worker: noise reduction, then time and pitch. Neither can run in an offline
+graph without leaking it. Skipped when neither is used.
+_Avoid_: pre-render, preprocessing
 
 ### The output
 
@@ -208,12 +227,60 @@ and the nearest one they accept is used.
 _Avoid_: frequency, resolution, kHz
 
 **Join**:
-Exporting a track's regions as one file instead of one file each. They are laid
-end to end in order, and the audio between them is dropped. Each region keeps
-its own volume and fade edges. Crossfades are not built.
+Exporting regions as one file instead of one file each. They are laid end to
+end in the join order, and the audio between them is dropped. Each region keeps
+its own volume and fade edges, except at a seam with a crossfade.
 _Avoid_: arrange, concatenate, merge, sequence
 
+**Join mode**:
+The master toolbar's choice of how many files an export makes. **Separate
+files**: one per region. **One file per track**: each track's regions joined.
+**One file for everything**: every track joined, in track order, into one file
+with the master format.
+_Avoid_: export mode, arrange mode
+
+**Join order**:
+The order a track's regions play in when joined. Start time, until the user
+moves a region in the join strip.
+_Avoid_: sequence, playlist, arrangement
+
+**Join strip**:
+The row of region chips in a card's Export section, shown while a join mode is
+on. It sets the join order and the crossfade at each seam.
+_Avoid_: timeline, arranger
+
 **Seam**:
-Where two regions meet in a joined file. One region's fade out runs straight
-into the next one's fade in.
+Where two regions meet in a joined file. With no crossfade, one region's fade
+out runs straight into the next one's fade in. This is a butt join.
 _Avoid_: splice, junction, edit point
+
+**Crossfade**:
+An overlap at a seam, where one region fades out while the next fades in, along
+an equal-power curve. It replaces both regions' own fades at that seam. It is
+held by the region after the seam, and it is never longer than half of either
+region.
+_Avoid_: blend, transition, overlap (unqualified)
+
+### Keeping the work
+
+**Saved project**:
+A track's work — regions, edit stack, overrides, join layout — kept in the
+browser, keyed by the file's name and size. Never the audio. Dropping the same
+file again restores it.
+_Avoid_: session, save file, document
+
+**Project file**:
+The same work for every loaded track, downloaded as a `.soundslice.json` file
+with **Save** and read back with **Open**.
+_Avoid_: export, backup, preset
+
+**Baseline**:
+What a track's work looked like when its file was loaded. A saved project is
+written only while the work differs from it, so an untouched file saves
+nothing.
+_Avoid_: original, default, initial state
+
+**Start fresh**:
+Dropping a restored track's saved work and going back to one region. One
+gesture, so it can be undone.
+_Avoid_: reset, discard, clear (that is **Clear Advanced settings**)

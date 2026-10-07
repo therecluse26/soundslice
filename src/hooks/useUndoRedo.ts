@@ -61,7 +61,7 @@ export function useUndoRedo(): void {
  * know about the DOM. A card that is not on screen — a view the user has
  * scrolled away from — is exactly the case this exists for.
  */
-function scrollToTrack(fileName: string | undefined): void {
+export function scrollToTrack(fileName: string | undefined): void {
   if (!fileName) return;
 
   const card = document.querySelector(

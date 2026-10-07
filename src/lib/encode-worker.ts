@@ -30,10 +30,14 @@ import { mp3BitrateFor } from "./audio-format";
 import {
   Analysis,
   CHUNK_FRAMES,
+  DenoiseRequest,
   EncodeRequest,
   MeasureRequest,
+  ProfileRequest,
+  StretchRequest,
   WorkerRequest,
 } from "./encode-protocol";
+import { SPECTRAL_FFT_SIZE, spectralKit } from "./spectral";
 import { integratedLoudness, truePeakDb } from "./loudness";
 import {
   WavPlan,
@@ -41,6 +45,9 @@ import {
   writeWavFrames,
   writeWavHeader,
 } from "./wav";
+
+/** Noise reduction and time and pitch. One instance, for its FFT tables. */
+const kit = spectralKit();
 
 /** Ids the main thread has abandoned. Checked at every yield point. */
 const cancelled = new Set<number>();
@@ -89,6 +96,18 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   try {
     if (request.action === "measure") {
       await handleMeasure(request);
+      return;
+    }
+    if (request.action === "profile") {
+      handleProfile(request);
+      return;
+    }
+    if (request.action === "denoise") {
+      await handleDenoise(request);
+      return;
+    }
+    if (request.action === "stretch") {
+      await handleStretch(request);
       return;
     }
     await handleEncode(request);
@@ -142,6 +161,98 @@ async function handleMeasure(request: MeasureRequest): Promise<void> {
   }
 
   post({ id, analysis });
+}
+
+/**
+ * A noise profile. One pass over a few seconds the user marked as noise: tens
+ * of milliseconds, so it does not yield.
+ */
+function handleProfile(request: ProfileRequest): void {
+  const magnitudes = kit.noiseSpectrum(request.channels, request.fftSize);
+  (self as unknown as Worker).postMessage(
+    { id: request.id, magnitudes },
+    [magnitudes.buffer]
+  );
+}
+
+/** Sends processed channels back, transferred. */
+function postChannels(id: number, channels: Float32Array[]): void {
+  (self as unknown as Worker).postMessage(
+    { id, channels },
+    channels.map((channel) => channel.buffer)
+  );
+}
+
+/**
+ * Noise reduction over a segment, a chunk at a time.
+ *
+ * The denoiser is a stream, so it is fed `CHUNK_FRAMES` at a time and the worker
+ * yields between chunks to read its inbox — the same rhythm encoding keeps.
+ * Its latency is fed as trailing silence and cut from the front, so the output
+ * lines up with the input to the sample.
+ */
+async function handleDenoise(request: DenoiseRequest): Promise<void> {
+  const { id, channels, sampleRate, amount, profile } = request;
+  const noise = kit.resampleProfile(
+    profile.magnitudes,
+    profile.sampleRate,
+    sampleRate
+  );
+
+  const total = channels.reduce((sum, channel) => sum + channel.length, 0);
+  let done = 0;
+  const out: Float32Array[] = [];
+
+  for (const input of channels) {
+    const denoiser = kit.createDenoiser(profile.fftSize, noise, amount);
+    const padded = new Float32Array(input.length + denoiser.latency);
+    padded.set(input);
+    const result = new Float32Array(padded.length);
+
+    for (let offset = 0; offset < padded.length; offset += CHUNK_FRAMES) {
+      const end = Math.min(offset + CHUNK_FRAMES, padded.length);
+      denoiser.process(padded.subarray(offset, end), result.subarray(offset, end));
+
+      done += end - offset;
+      post({ id, progress: Math.min(1, done / total) });
+
+      await nextTask();
+      if (cancelled.has(id)) {
+        post({ id, cancelled: true });
+        return;
+      }
+    }
+
+    out.push(result.slice(denoiser.latency));
+  }
+
+  postChannels(id, out);
+}
+
+/**
+ * Time and pitch over a segment. One channel at a time, yielding between them.
+ *
+ * Coarser than encoding: a cancel waits for the channel in hand. A stretched
+ * region is a region, not a whole track, so that is a second or two at most.
+ */
+async function handleStretch(request: StretchRequest): Promise<void> {
+  const { id, channels, rate, semitones } = request;
+  const out: Float32Array[] = [];
+
+  for (let index = 0; index < channels.length; index++) {
+    out.push(
+      kit.stretchChannel(channels[index], rate, semitones, SPECTRAL_FFT_SIZE)
+    );
+    post({ id, progress: (index + 1) / channels.length });
+
+    await nextTask();
+    if (cancelled.has(id)) {
+      post({ id, cancelled: true });
+      return;
+    }
+  }
+
+  postChannels(id, out);
 }
 
 async function handleEncode(request: EncodeRequest): Promise<void> {

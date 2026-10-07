@@ -81,16 +81,60 @@ export type Analysis = {
   truePeakDb?: number;
 };
 
+/**
+ * Learn a noise profile from a stretch of audio the user marked as noise.
+ * Ticket 036. Its `channels` are transferred: they are a copy made for this.
+ */
+export type ProfileRequest = {
+  action: "profile";
+  id: number;
+  fftSize: number;
+  channels: Float32Array[];
+};
+
+/**
+ * Denoise a segment, for export. Ticket 036.
+ *
+ * The profile's magnitudes are copied, not transferred — the edit stack keeps
+ * the profile, and a transfer would detach it.
+ */
+export type DenoiseRequest = {
+  action: "denoise";
+  id: number;
+  sampleRate: number;
+  amount: number;
+  profile: { magnitudes: Float32Array; fftSize: number; sampleRate: number };
+  channels: Float32Array[];
+};
+
+/** Change a segment's speed and pitch, for export. Ticket 037. */
+export type StretchRequest = {
+  action: "stretch";
+  id: number;
+  rate: number;
+  semitones: number;
+  channels: Float32Array[];
+};
+
 export type CancelRequest = {
   action: "cancel";
   id: number;
 };
 
-export type WorkerRequest = EncodeRequest | MeasureRequest | CancelRequest;
+export type WorkerRequest =
+  | EncodeRequest
+  | MeasureRequest
+  | ProfileRequest
+  | DenoiseRequest
+  | StretchRequest
+  | CancelRequest;
 
 export type EncodeProgress = { id: number; progress: number };
 export type EncodeDone = { id: number; blob: Blob };
 export type MeasureDone = { id: number; analysis: Analysis };
+export type ProfileDone = { id: number; magnitudes: Float32Array };
+/** Processed audio, transferred back. One array per channel. */
+export type ChannelsDone = { id: number; channels: Float32Array[] };
 export type EncodeCancelled = { id: number; cancelled: true };
 export type EncodeFailed = { id: number; error: string };
 
@@ -98,6 +142,8 @@ export type WorkerReply =
   | EncodeProgress
   | EncodeDone
   | MeasureDone
+  | ProfileDone
+  | ChannelsDone
   | EncodeCancelled
   | EncodeFailed;
 

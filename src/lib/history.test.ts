@@ -5,9 +5,13 @@ import {
   History,
   HistoryEntry,
   changedFileNames,
+  filesHeldByHistory,
+  nextRedoLabel,
+  nextUndoLabel,
   pushEntry,
   redoEntry,
   snapshotTrack,
+  snapshotWork,
   snapshotsEqual,
   undoEntry,
 } from "./history";
@@ -238,5 +242,127 @@ describe("snapshotsEqual", () => {
         [snapshotTrack("a.wav", TWO, "r2")]
       )
     ).toBe(false);
+  });
+});
+
+describe("entries that change the master defaults or the track list", () => {
+  const master = (exportFileType: string) =>
+    ({
+      normalizeAudio: false,
+      applyPostProcessing: false,
+      loudnessTargetLufs: -14,
+      exportFileType,
+      bitDepth: 16,
+      outputSampleRate: null,
+      joinMode: "separate",
+    }) as unknown as import("./master-defaults").MasterDefaults;
+
+  const file = (name: string) => new File(["x"], name);
+
+  it("records a master default change with no track in it", () => {
+    const history = pushEntry(EMPTY_HISTORY, {
+      label: "Output format",
+      before: [],
+      after: [],
+      master: { before: master("wav"), after: master("flac") },
+    });
+
+    expect(history.past).toHaveLength(1);
+  });
+
+  it("records nothing when a master default is set to what it was", () => {
+    const history = pushEntry(EMPTY_HISTORY, {
+      label: "Output format",
+      before: [],
+      after: [],
+      master: { before: master("wav"), after: master("wav") },
+    });
+
+    expect(history.past).toHaveLength(0);
+  });
+
+  it("coalesces a slider on the master and keeps where it started", () => {
+    const first = pushEntry(EMPTY_HISTORY, {
+      label: "Loudness target",
+      before: [],
+      after: [],
+      master: { before: master("wav"), after: master("mp3") },
+      coalesceKey: "master:0",
+    });
+    const second = pushEntry(first, {
+      label: "Loudness target",
+      before: [],
+      after: [],
+      master: { before: master("mp3"), after: master("flac") },
+      coalesceKey: "master:0",
+    });
+
+    expect(second.past).toHaveLength(1);
+    expect(second.past[0].master?.before).toEqual(master("wav"));
+    expect(second.past[0].master?.after).toEqual(master("flac"));
+  });
+
+  it("compares the track list by object, so a renamed copy is a change", () => {
+    const a = file("a.wav");
+    const sameName = file("a.wav");
+
+    expect(
+      pushEntry(EMPTY_HISTORY, {
+        label: "Add files",
+        before: [],
+        after: [],
+        files: { before: [a], after: [a] },
+      }).past
+    ).toHaveLength(0);
+
+    expect(
+      pushEntry(EMPTY_HISTORY, {
+        label: "Add files",
+        before: [],
+        after: [],
+        files: { before: [a], after: [sameName] },
+      }).past
+    ).toHaveLength(1);
+  });
+
+  it("finds the files only the history is keeping alive", () => {
+    const kept = file("kept.wav");
+    const removed = file("removed.wav");
+
+    const history = pushEntry(EMPTY_HISTORY, {
+      label: "Remove track",
+      before: [snapshotTrack("removed.wav", ONE)],
+      after: [],
+      files: { before: [kept, removed], after: [kept] },
+    });
+
+    expect(filesHeldByHistory(history, [kept])).toEqual([removed]);
+    expect(filesHeldByHistory(history, [kept, removed])).toEqual([]);
+  });
+
+  it("names the next undo and redo for the header's buttons", () => {
+    const history = pushEntry(EMPTY_HISTORY, gesture("Add region", ONE, TWO));
+
+    expect(nextUndoLabel(history)).toBe("Add region");
+    expect(nextRedoLabel(history)).toBeNull();
+    expect(nextRedoLabel(undoEntry(history).history)).toBe("Add region");
+  });
+});
+
+describe("snapshotWork", () => {
+  it("copies the export overrides and the join layout too", () => {
+    const work = {
+      regions: [...ONE],
+      exportOverrides: { bitDepth: 24 as const },
+      join: { order: ["r1"], crossfadeMs: { r1: 40 } },
+    };
+    const snapshot = snapshotWork("a.wav", work);
+
+    work.exportOverrides.bitDepth = 16 as unknown as 24;
+    work.join.order.push("r2");
+    work.join.crossfadeMs.r1 = 0;
+
+    expect(snapshot.exportOverrides).toEqual({ bitDepth: 24 });
+    expect(snapshot.join).toEqual({ order: ["r1"], crossfadeMs: { r1: 40 } });
   });
 });

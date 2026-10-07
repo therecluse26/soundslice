@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { useAudioStore } from "@/stores/audio-store";
@@ -39,6 +40,10 @@ export default function LoudnessTarget() {
   const target = useAudioStore((state) => state.loudnessTargetLufs);
   const setTarget = useAudioStore((state) => state.setLoudnessTargetLufs);
 
+  // One drag is one undo entry. Letting go bumps the key, so the next drag is
+  // its own. Ticket 030 put the master defaults on the history.
+  const [gesture, setGesture] = useState(0);
+
   return (
     <div className="flex flex-col gap-1.5 pt-1">
       <Label className="flex items-baseline justify-between gap-2 text-xs font-normal text-muted-foreground">
@@ -53,7 +58,10 @@ export default function LoudnessTarget() {
         min={LOUDNESS_TARGET_RANGE.min}
         max={LOUDNESS_TARGET_RANGE.max}
         step={1}
-        onValueChange={([value]) => setTarget(value)}
+        onValueChange={([value]) =>
+          setTarget(value, { coalesceKey: `loudness-target:${gesture}` })
+        }
+        onValueCommit={() => setGesture((n) => n + 1)}
         aria-label="Master loudness target in LUFS"
       />
     </div>

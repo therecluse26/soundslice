@@ -21,8 +21,18 @@ export type EqBand = {
 /** A frequency measurement taken once, from a region the user marks as silent. */
 export type NoiseProfile = {
   id: string;
+  /** The average magnitude of each bin, `fftSize / 2 + 1` of them. */
   magnitudes: Float32Array;
   fftSize: number;
+  /**
+   * The rate it was measured at. Bin *k* means a different frequency at
+   * another rate, so a profile used at a different rate is re-read by
+   * frequency — export at 48 kHz from a 44.1 kHz recording, or preview through
+   * a context at the hardware's rate. See `resampleProfile`.
+   */
+  sampleRate: number;
+  /** Where it was measured, in the source file's seconds. Shown, never used. */
+  fromSec?: { start: number; end: number };
 };
 
 /**
@@ -99,6 +109,34 @@ export type Region = {
 
   stretch?: { rate: number; semitones: number };
 };
+
+/**
+ * True when this region plays at another speed or another pitch.
+ *
+ * A `stretch` of rate 1 and 0 semitones is no stretch at all, and it must cost
+ * nothing — no extra pass, no worker job, no different byte in the export.
+ */
+export function isStretched(region: Region): boolean {
+  return (
+    !!region.stretch &&
+    (region.stretch.rate !== 1 || region.stretch.semitones !== 0)
+  );
+}
+
+/**
+ * The stack with noise reduction moved to the front, if it is anywhere else.
+ *
+ * A noise profile describes the raw recording's noise. After an EQ or a gain the
+ * noise has another shape, and subtracting the profile would remove the wrong
+ * amount at every frequency. So noise reduction always hears the input first —
+ * the chain will not let anything be moved in front of it, and a stack written
+ * some other way is put right here before anything renders it. Ticket 036.
+ */
+export function withNoiseFirst(stack: EditStack): EditStack {
+  const at = stack.findIndex((operation) => operation.op === "noiseReduction");
+  if (at <= 0) return stack;
+  return [stack[at], ...stack.slice(0, at), ...stack.slice(at + 1)];
+}
 
 /**
  * The fade every slice has had since before this map existed.
@@ -262,21 +300,59 @@ export const LOUDNESS_DEFAULTS = {
 export const LOUDNESS_TARGET_RANGE = { min: -30, max: -8 } as const;
 
 /**
- * The canonical order, top to bottom. Design section 5.
+ * The canonical order, top to bottom. Design section 5, **as corrected by
+ * ticket 029**.
  *
- * Simple view does not use this to sort — see `simpleStack`, which is an
- * explicit stack. Advanced view reorders freely, and this is what "Reset order"
- * puts it back to.
+ * Advanced view reorders freely, and this is what "Reset order" puts it back to.
+ *
+ * ## Peak normalization is the input slot
+ *
+ * The design put peak normalization after loudness, near the end. Ticket 008
+ * then found that the order could not express Simple view's own stack with both
+ * switches on — `peakNormalization → compressor → loudness → limiter` — because
+ * there the peak normalization is **input gain staging**: it lifts a quiet
+ * recording to the compressor's threshold so the compressor engages at all.
+ *
+ * The map's fog named three fixes: a second `gain` position, a free-floating
+ * peak normalization, or a new "input gain" operation. Ticket 029 took none of
+ * them. **Peak normalization moves to the input**, straight after noise
+ * reduction, and the order then states what the operation is for:
+ *
+ * ```
+ *   clean up   →  level the input  →  shape  →  set the output level  →  catch
+ *   noise         peak                EQ,       gain, loudness             limiter
+ *                                     comp
+ * ```
+ *
+ * Every one of Simple view's four stacks is now canonical, which a test checks,
+ * so "Reset order" always has a correct answer. Noise reduction stays first: its
+ * profile was measured on the untouched recording, so nothing may change the
+ * level before it.
  */
 export const CANONICAL_ORDER: OperationName[] = [
   "noiseReduction",
+  "peakNormalization",
   "eq",
   "compressor",
   "gain",
   "loudness",
-  "peakNormalization",
   "limiter",
 ];
+
+/** Where this operation sits in the canonical order. */
+export function canonicalRank(op: OperationName): number {
+  return CANONICAL_ORDER.indexOf(op);
+}
+
+/** True when this stack is already in the canonical order. */
+export function isCanonical(stack: EditStack): boolean {
+  for (let index = 1; index < stack.length; index++) {
+    if (canonicalRank(stack[index - 1].op) > canonicalRank(stack[index].op)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /**
  * Sorts a stack into the canonical order, keeping the relative order of
@@ -286,9 +362,31 @@ export const CANONICAL_ORDER: OperationName[] = [
  * `peakNormalization` entries keep the order the user put them in.
  */
 export function sortToCanonical(stack: EditStack): EditStack {
-  return [...stack].sort(
-    (a, b) => CANONICAL_ORDER.indexOf(a.op) - CANONICAL_ORDER.indexOf(b.op)
-  );
+  return [...stack].sort((a, b) => canonicalRank(a.op) - canonicalRank(b.op));
+}
+
+/**
+ * The stack with one operation added **where the canonical order would put it**,
+ * and every other operation left exactly where the user put it.
+ *
+ * Not `sortToCanonical([...stack, operation])`. Advanced view lets a user drag
+ * the limiter to the front, and switching EQ on must not quietly drag it back.
+ * The new operation goes after the last operation that canonically comes before
+ * it, or at the front when none does. On a canonical stack that is the same
+ * answer sorting gives, which a test checks.
+ */
+export function insertCanonically(
+  stack: EditStack,
+  operation: Operation
+): EditStack {
+  const rank = canonicalRank(operation.op);
+
+  let at = 0;
+  stack.forEach((existing, index) => {
+    if (canonicalRank(existing.op) < rank) at = index + 1;
+  });
+
+  return [...stack.slice(0, at), operation, ...stack.slice(at)];
 }
 
 /**
@@ -339,8 +437,9 @@ export type SimpleSwitches = {
  * **This changes exported bytes for existing users**, and it is the change the
  * switch was always supposed to make.
  *
- * The canonical order has no level-setting slot before the compressor, so it
- * cannot express this. That is a hole in the design, recorded in ticket 008.
+ * Ticket 008 found that the canonical order could not express this stack. Ticket
+ * 029 moved peak normalization to the input slot of that order, so **all four
+ * stacks here are canonical now**, and a test keeps them so.
  *
  * The limiter is unconditional. Design section 5 settled that: on by default,
  * last, and Simple view never turns it off. It is a sample-peak limiter, so it
