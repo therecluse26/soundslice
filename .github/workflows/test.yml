@@ -13,25 +13,32 @@ jobs:
 
     strategy:
       matrix:
-        node-version: ["20.9.0"]
+        node-version: ["22.13.0"]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
+      # pnpm, and only pnpm. The version comes from `packageManager` in
+      # package.json. npm used to install here, and it resolved wavesurfer.js
+      # 7.8.6 from a second lockfile while pnpm pins 7.8.9, so the type check
+      # failed on `exponentialZooming`. See the warning in .wayfinder/map.md.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: "npm"
+          cache: "pnpm"
 
       - name: Install packages
-        run: npm i
+        run: pnpm install --frozen-lockfile
 
       # Type-check first. `tsc` covers the test files too, because tsconfig.json
       # includes all of src/ and the tests live beside the code they test.
       - name: Type-check
-        run: npx tsc --noEmit
+        run: pnpm exec tsc --noEmit
 
       - name: Run tests
-        run: npm test
+        run: pnpm test

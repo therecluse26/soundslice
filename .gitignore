@@ -29,3 +29,6 @@ bench-audio/
 
 # Playwright MCP browser artifacts (console logs, downloads)
 .playwright-mcp/
+
+# Claude Code agent worktrees. Each is a separate checkout, never content.
+.claude/worktrees/
